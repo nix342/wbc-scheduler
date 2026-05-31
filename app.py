@@ -276,51 +276,59 @@ if uploaded_file is not None:
 
         st.subheader("Your Personalized Itinerary")
         
-        # Create the Tab controls
-        tab1, tab2 = st.tabs(["📊 Visual Schedule", "📋 Tabular Data"])
+        # Create the Main View controls
+        main_tab1, main_tab2 = st.tabs(["📊 Visual Schedule", "📋 Tabular Data"])
         
-        with tab1:
+        with main_tab1:
             viz_df = output_df.copy()
             viz_df['End Time'] = viz_df['Time'] + viz_df['Duration']
             
-            # Format dates for a clean dropdown menu
+            # Format dates for clean tab labels and ensure they are chronological
             viz_df['Formatted Date'] = viz_df['Date_parsed'].dt.strftime('%A, %b %d')
-            unique_dates = viz_df['Formatted Date'].unique()
+            unique_dates = viz_df.sort_values('Date_parsed')['Formatted Date'].unique()
             
-            # Day selector dropdown
-            selected_date = st.selectbox("Select Convention Day:", unique_dates)
-            
-            # Filter data to only show the chosen day
-            day_df = viz_df[viz_df['Formatted Date'] == selected_date]
-            
-            # Base encoding shared by both layers
-            base_chart = alt.Chart(day_df).encode(
-                x2='End Time',
-                y=alt.Y('Event', sort=alt.EncodingSortField(field="Time", order="ascending"), title=""),
-                color=alt.Color('Event', legend=None),
-                tooltip=['Event', 'Round/Heat', 'Location', 'Time', 'Duration']
-            ).properties(
-                width=800
-            )
+            if len(unique_dates) > 0:
+                # Create a nested tab for each day to make switching instantaneous!
+                day_tabs = st.tabs(list(unique_dates))
+                
+                for idx, selected_date in enumerate(unique_dates):
+                    with day_tabs[idx]:
+                        # Filter data to only show the chosen day
+                        day_df = viz_df[viz_df['Formatted Date'] == selected_date]
+                        
+                        # Base encoding shared by both layers
+                        base_chart = alt.Chart(day_df).encode(
+                            x2='End Time',
+                            y=alt.Y('Event', sort=alt.EncodingSortField(field="Time", order="ascending"), title=""),
+                            color=alt.Color('Event', legend=None),
+                            tooltip=['Event', 'Round/Heat', 'Location', 'Time', 'Duration']
+                        ).properties(
+                            width=800
+                        )
 
-            # Layer 1: Visible colored bars with the bottom X-axis
-            bottom_axis_chart = base_chart.mark_bar(cornerRadius=4, height=20).encode(
-                x=alt.X('Time', title='Hour of Day (24h)', scale=alt.Scale(domain=[8, 26]), axis=alt.Axis(orient='bottom'))
-            )
+                        # Lock the X-axis from 8 (08:00) to 26 (02:00 next day)
+                        x_scale = alt.Scale(domain=[8, 26], clamp=True)
+                        
+                        # Layer 1: Visible colored bars with the bottom X-axis
+                        bottom_axis_chart = base_chart.mark_bar(cornerRadius=4, height=20).encode(
+                            x=alt.X('Time', title='Hour of Day (24h)', scale=x_scale, axis=alt.Axis(orient='bottom', tickCount=18))
+                        )
 
-            # Layer 2: Invisible marks with the top X-axis
-            top_axis_chart = base_chart.mark_bar(opacity=0).encode(
-                x=alt.X('Time', title='', scale=alt.Scale(domain=[8, 26]), axis=alt.Axis(orient='top'))
-            )
+                        # Layer 2: Invisible marks with the top X-axis
+                        top_axis_chart = base_chart.mark_bar(opacity=0).encode(
+                            x=alt.X('Time', title='', scale=x_scale, axis=alt.Axis(orient='top', tickCount=18))
+                        )
 
-            # Layer them together and force independent X-scales so both axes are forced to render
-            chart = alt.layer(bottom_axis_chart, top_axis_chart).resolve_scale(
-                x='independent'
-            ).interactive()
+                        # Layer them together and force independent X-scales
+                        chart = alt.layer(bottom_axis_chart, top_axis_chart).resolve_scale(
+                            x='independent'
+                        ).interactive()
 
-            st.altair_chart(chart, use_container_width=True)
+                        st.altair_chart(chart, use_container_width=True)
+            else:
+                st.info("No events scheduled yet. Adjust your filters or constraints!")
 
-        with tab2:
+        with main_tab2:
             st.dataframe(
                 output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']],
                 use_container_width=True
