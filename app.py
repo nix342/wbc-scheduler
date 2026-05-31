@@ -29,7 +29,6 @@ st.sidebar.header("1. Your Convention Details")
 arrival_date = st.sidebar.date_input("Arrival Date", pd.to_datetime("2026-07-25"))
 arrival_time = st.sidebar.slider("Arrival Time (24h Clock)", 0, 23, 18)
 
-# NEW: Departure Controls
 departure_date = st.sidebar.date_input("Departure Date", pd.to_datetime("2026-08-02"))
 departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, 15)
 
@@ -67,7 +66,6 @@ if uploaded_file is not None:
         options=unique_wbc_events,
         max_selections=3
     )
-    priority_cleans = [clean_name(title) for title in selected_priorities]
     
     # ---------------------------------------------------------
     # 5. Limit Tournament Runs
@@ -81,7 +79,8 @@ if uploaded_file is not None:
         )
         game_caps = {}
         for g in games_to_cap:
-            game_caps[clean_name(g)] = st.number_input(
+            # FIX: Bind the cap directly to the official WBC Event string
+            game_caps[g] = st.number_input(
                 f"Max Round/Heat for {g}:",
                 min_value=1, max_value=10, value=1, step=1
             )
@@ -91,7 +90,8 @@ if uploaded_file is not None:
     # ---------------------------------------------------------
     matches = []
     for _, w_row in wbc.iterrows():
-        is_priority = w_row['clean_name'] in priority_cleans
+        # FIX: Check priority against the direct WBC Event string
+        is_priority = w_row['Event'] in selected_priorities
         matched_fav = False
         
         for _, f_row in favs.iterrows():
@@ -100,7 +100,7 @@ if uploaded_file is not None:
                 matched_fav = True
                 break
                 
-        # Force priorities into the schedule with a dummy 10/10 rating if not owned
+        # Force priorities into the schedule with a dummy 10/10 rating if not owned or below threshold
         if not matched_fav and is_priority:
             priority_match = w_row.to_dict()
             priority_match['rating'] = 10.0
@@ -116,15 +116,11 @@ if uploaded_file is not None:
         departure_dt = pd.to_datetime(departure_date)
         
         def is_within_convention_window(row):
-            # Too early?
             if row['Date_parsed'] < arrival_dt: return False
             if row['Date_parsed'] == arrival_dt and row['Time'] < arrival_time: return False
-            
-            # Too late? (Check if the event *ends* after they plan to leave)
             event_end_time = row['Time'] + row['Duration']
             if row['Date_parsed'] > departure_dt: return False
             if row['Date_parsed'] == departure_dt and event_end_time > departure_time: return False
-            
             return True
             
         matched = matched[matched.apply(is_within_convention_window, axis=1)]
@@ -133,7 +129,6 @@ if uploaded_file is not None:
         if exclude_demos:
             matched = matched[~matched['Round/Heat'].astype(str).str.contains('Demo', case=False, na=False)]
             
-        # Calculate dynamic max rounds for validation rules
         total_rounds = {}
         for game in wbc['Event'].unique():
             game_events = wbc[wbc['Event'] == game]['Round/Heat'].astype(str)
@@ -147,7 +142,8 @@ if uploaded_file is not None:
             total_rounds[game] = max_round
 
         def calculate_priority_tier(row):
-            if row['clean_name'] in priority_cleans: return 2
+            # FIX: Use official WBC Event string for priority scaling
+            if row['Event'] in selected_priorities: return 2
             return 0
 
         matched['priority_tier'] = matched.apply(calculate_priority_tier, axis=1)
@@ -191,9 +187,10 @@ if uploaded_file is not None:
             if use_variety_pass and 'heat' in stage_str_lower and scheduled_heats[game] >= 1:
                 continue
 
-            if row['clean_name'] in game_caps:
+            # FIX: Check capping limitations against official WBC Event string
+            if row['Event'] in game_caps:
                 stage_num = get_round_number(stage)
-                if (stage_num is not None and stage_num > game_caps[row['clean_name']]) or is_elimination(stage):
+                if (stage_num is not None and stage_num > game_caps[row['Event']]) or is_elimination(stage):
                     continue
             
             if tier < 2:
@@ -237,9 +234,10 @@ if uploaded_file is not None:
                 stage_str_lower = str(stage).lower()
                 past_stages = scheduled_stages[game]
 
-                if row['clean_name'] in game_caps:
+                # FIX: Check capping limitations against official WBC Event string
+                if row['Event'] in game_caps:
                     stage_num = get_round_number(stage)
-                    if (stage_num is not None and stage_num > game_caps[row['clean_name']]) or is_elimination(stage):
+                    if (stage_num is not None and stage_num > game_caps[row['Event']]) or is_elimination(stage):
                         continue
 
                 if tier < 2:
