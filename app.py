@@ -22,15 +22,21 @@ def clean_name(name):
 
 wbc['clean_name'] = wbc['Event'].apply(clean_name)
 
+# ---------------------------------------------------------
 # 2. Sidebar Configuration Controls
+# ---------------------------------------------------------
 st.sidebar.header("1. Your Convention Details")
 arrival_date = st.sidebar.date_input("Arrival Date", pd.to_datetime("2026-07-25"))
 arrival_time = st.sidebar.slider("Arrival Time (24h Clock)", 0, 23, 18)
 
+# NEW: Departure Controls
+departure_date = st.sidebar.date_input("Departure Date", pd.to_datetime("2026-08-02"))
+departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, 15)
+
 st.sidebar.header("2. Filters & Preferences")
 exclude_demos = st.sidebar.checkbox("Exclude Demo Rounds", value=True)
 rating_cutoff = st.sidebar.slider("Minimum BGG Rating to consider", 1, 10, 7)
-# NEW: Scheduling Philosophy Toggle
+
 schedule_philosophy = st.sidebar.radio(
     "Scheduling Strategy Preference",
     options=[
@@ -51,13 +57,13 @@ if uploaded_file is not None:
     favs = coll[coll['rating'] >= rating_cutoff].sort_values('rating', ascending=False)
     favs['clean_name'] = favs['objectname'].apply(clean_name)
     
-# ---------------------------------------------------------
-    # 4. Dynamic Priority Multiselect (From Master WBC List)
+    # ---------------------------------------------------------
+    # 4. Dynamic Priority Multiselect
     # ---------------------------------------------------------
     st.sidebar.header("4. Priority Must-Play Games")
     unique_wbc_events = sorted(wbc['Event'].dropna().unique())
     selected_priorities = st.sidebar.multiselect(
-        "Select up to 3 'Must-Play' games to schedule first (even if not in your collection!):",
+        "Select up to 3 'Must-Play' games to schedule first:",
         options=unique_wbc_events,
         max_selections=3
     )
@@ -70,7 +76,7 @@ if uploaded_file is not None:
     with st.sidebar.expander("Exit Tournaments Early (Optional)"):
         games_to_cap = st.multiselect(
             "Select games you want to limit:",
-            options=unique_wbc_events, # Now also uses the full WBC list
+            options=unique_wbc_events,
             help="Choose games where you only plan to play the first few heats or rounds."
         )
         game_caps = {}
@@ -94,9 +100,8 @@ if uploaded_file is not None:
                 matched_fav = True
                 break
                 
-        # NEW LOGIC: If the game isn't in their BGG collection, but they selected it as a Must-Play:
+        # Force priorities into the schedule with a dummy 10/10 rating if not owned
         if not matched_fav and is_priority:
-            # Force it into the schedule with a dummy 10/10 rating so the engine treats it as a favorite
             priority_match = w_row.to_dict()
             priority_match['rating'] = 10.0
             matches.append(priority_match)
@@ -106,9 +111,24 @@ if uploaded_file is not None:
     else:
         matched = pd.DataFrame(matches)
         
-        # Apply arrival filtering
+        # --- TIME FILTERING (Arrival & Departure) ---
         arrival_dt = pd.to_datetime(arrival_date)
-        matched = matched[~((matched['Date_parsed'] < arrival_dt) | ((matched['Date_parsed'] == arrival_dt) & (matched['Time'] < arrival_time)))]
+        departure_dt = pd.to_datetime(departure_date)
+        
+        def is_within_convention_window(row):
+            # Too early?
+            if row['Date_parsed'] < arrival_dt: return False
+            if row['Date_parsed'] == arrival_dt and row['Time'] < arrival_time: return False
+            
+            # Too late? (Check if the event *ends* after they plan to leave)
+            event_end_time = row['Time'] + row['Duration']
+            if row['Date_parsed'] > departure_dt: return False
+            if row['Date_parsed'] == departure_dt and event_end_time > departure_time: return False
+            
+            return True
+            
+        matched = matched[matched.apply(is_within_convention_window, axis=1)]
+        # --------------------------------------------
         
         if exclude_demos:
             matched = matched[~matched['Round/Heat'].astype(str).str.contains('Demo', case=False, na=False)]
@@ -128,34 +148,13 @@ if uploaded_file is not None:
 
         def calculate_priority_tier(row):
             if row['clean_name'] in priority_cleans: return 2
-            if 'paths of glory' in row['Event'].lower(): return 1
-            if 'combat commander' in row['Event'].lower(): return 1
             return 0
 
         matched['priority_tier'] = matched.apply(calculate_priority_tier, axis=1)
         matched = matched.sort_values(['priority_tier', 'rating', 'Date_parsed', 'Time'], ascending=[False, False, True, True])
         
-        # Algorithmic Scheduling Logic Engine
-        schedule = []
-        booked = {}
-        scheduled_stages = {}
-        scheduled_heats = {}
-        scheduled_rounds = {}
-        
-        def get_round_number(stage_str):
-            m = re.search(r'Round (\d+)', str(stage_str))
-            return int(m.group(1)) if m else None
-
-        def is_elimination(stage_str):
-            return bool(re.search(r'quarterfinal|semifinal|final', str(stage_str), re.IGNORECASE))
-
-        # Helper function to grab numbers out of 'Round 2/5' or 'Heat 1/3'
-        def get_stage_number(stage_str):
-            m = re.search(r'(?:Round|Heat)\s*(\d+)', str(stage_str), re.IGNORECASE)
-            return int(m.group(1)) if m else None
-
-# ----------------------------------------------------
-        # ALGORITHMIC SCHEDULING LOGIC ENGINE (Updated)
+        # ----------------------------------------------------
+        # ALGORITHMIC SCHEDULING LOGIC ENGINE
         # ----------------------------------------------------
         schedule = []
         booked = {}
@@ -164,13 +163,12 @@ if uploaded_file is not None:
         scheduled_rounds = {}
         
         def get_round_number(stage_str):
-            m = re.search(r'Round (\d+)', str(stage_str))
+            m = re.search(r'(?:Round|Heat)\s*(\d+)', str(stage_str), re.IGNORECASE)
             return int(m.group(1)) if m else None
 
         def is_elimination(stage_str):
             return bool(re.search(r'quarterfinal|semifinal|final', str(stage_str), re.IGNORECASE))
 
-        # Determine if we need a unique first pass based on user toggle
         use_variety_pass = "Maximize Variety" in schedule_philosophy
         
         # --- PASS 1 ---
@@ -190,23 +188,17 @@ if uploaded_file is not None:
             past_stages = scheduled_stages[game]
             stage_str_lower = str(stage).lower()
             
-            # VARIETY FILTRATION: Skip duplicate heats on the first pass
             if use_variety_pass and 'heat' in stage_str_lower and scheduled_heats[game] >= 1:
                 continue
 
-            # Enforce early exit tournament caps (from our previous update)
             if row['clean_name'] in game_caps:
-                def get_stage_number(s):
-                    m = re.search(r'(?:Round|Heat)\s*(\d+)', str(s), re.IGNORECASE)
-                    return int(m.group(1)) if m else None
-                stage_num = get_stage_number(stage)
+                stage_num = get_round_number(stage)
                 if (stage_num is not None and stage_num > game_caps[row['clean_name']]) or is_elimination(stage):
                     continue
             
-            # Strict Progression Check (skip for forced manual priorities)
             if tier < 2:
                 r_num = get_round_number(stage)
-                if r_num is not None and r_num > 1:
+                if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower:
                     if not any(get_round_number(ps) == r_num - 1 for ps in past_stages): continue
                 if is_elimination(stage):
                     has_two_heats = scheduled_heats[game] >= 2
@@ -231,10 +223,9 @@ if uploaded_file is not None:
                 if 'heat' in stage_str_lower: scheduled_heats[game] += 1
                 if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
 
-        # --- PASS 2 (Only triggers if Variety Mode is active to fill gaps) ---
+        # --- PASS 2 (Filler for Variety Mode) ---
         if use_variety_pass:
             for _, row in matched.iterrows():
-                # Skip if this exact event row was already successfully booked in Pass 1
                 if any(r.name == row.name for r in schedule): continue
                 
                 date = row['Date']
@@ -246,10 +237,14 @@ if uploaded_file is not None:
                 stage_str_lower = str(stage).lower()
                 past_stages = scheduled_stages[game]
 
-                # Re-verify progression rules for the stragglers
+                if row['clean_name'] in game_caps:
+                    stage_num = get_round_number(stage)
+                    if (stage_num is not None and stage_num > game_caps[row['clean_name']]) or is_elimination(stage):
+                        continue
+
                 if tier < 2:
                     r_num = get_round_number(stage)
-                    if r_num is not None and r_num > 1:
+                    if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower:
                         if not any(get_round_number(ps) == r_num - 1 for ps in past_stages): continue
                     if is_elimination(stage):
                         has_two_heats = scheduled_heats[game] >= 2
@@ -273,10 +268,10 @@ if uploaded_file is not None:
                     scheduled_stages[game].append(stage)
                     if 'heat' in stage_str_lower: scheduled_heats[game] += 1
                     if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
-                        
+
         output_df = pd.DataFrame(schedule).sort_values(['Date_parsed', 'Time'])
         
-        # Display Final Table
+        # Display Final Output Table
         st.subheader("Your Personalized Itinerary")
         st.dataframe(
             output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']],
@@ -284,6 +279,11 @@ if uploaded_file is not None:
         )
         
         csv = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].to_csv(index=False).encode('utf-8')
-        st.download_button("Download Schedule as CSV", data=csv, file_name="wbc_itinerary.csv", mime="text/csv")
+        st.download_button(
+            label="Download Schedule as CSV",
+            data=csv,
+            file_name="wbc_itinerary.csv",
+            mime="text/csv"
+        )
 else:
     st.info("👈 Please upload your personal boardgame collection CSV in the sidebar to populate your options!")
