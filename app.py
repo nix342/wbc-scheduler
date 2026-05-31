@@ -108,14 +108,15 @@ if uploaded_file is not None:
         st.warning("No matching games found between your favorites/priorities and the WBC schedule.")
     else:
         # --- NEW: MASSIVE VISUAL LOADING SPINNER ---
-        # Everything indented below this runs while the spinner is spinning!
         with st.spinner('Crunching the convention matrix! Building your conflict-free itinerary...'):
+            
+            # Artificial delay so the user actually sees the loading animation!
+            time.sleep(1.5) 
             
             matched = pd.DataFrame(matches)
             
             # --- TIME FILTERING (Arrival & Departure) ---
-            arrival_dt = pd.to_datetime(arrival_date)
-            departure_dt = pd.to_datetime(departure_date)
+            arrival_dt = pd.to_datetime(arrival_date)            departure_dt = pd.to_datetime(departure_date)
             
             def is_within_convention_window(row):
                 if row['Date_parsed'] < arrival_dt: return False
