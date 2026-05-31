@@ -86,14 +86,29 @@ if uploaded_file is not None:
             )
             
     # ---------------------------------------------------------
-    # --- SPINNER MOVED UP: Starts before the heavy lifting! ---
+    # 6. Exclude Games (The "Ban" List)
+    # ---------------------------------------------------------
+    st.sidebar.header("6. Exclude Games")
+    with st.sidebar.expander("Skip specific games (Optional)"):
+        games_to_exclude = st.multiselect(
+            "Select games to completely ignore:",
+            options=unique_wbc_events,
+            help="These games will NOT be scheduled, even if they have a high BGG rating."
+        )
+
+    # ---------------------------------------------------------
+    # --- SPINNER START ---
     # ---------------------------------------------------------
     with st.spinner('Crunching the convention matrix! Building your conflict-free itinerary...'):
         
-        # We can remove the time.sleep(1.5) because the matching process takes long enough to show the spinner!
-        
         matches = []
         for _, w_row in wbc.iterrows():
+            
+            # --- NEW: EXCLUSION CHECK ---
+            # If the game is on the ban list, skip matching it entirely!
+            if w_row['Event'] in games_to_exclude:
+                continue
+                
             is_priority = w_row['Event'] in selected_priorities
             matched_fav = False
             
@@ -241,118 +256,3 @@ if uploaded_file is not None:
                         r_num = get_round_number(stage)
                         if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower:
                             if not any(get_round_number(ps) == r_num - 1 for ps in past_stages): continue
-                        if is_elimination(stage):
-                            has_two_heats = scheduled_heats[game] >= 2
-                            expected_rounds = total_rounds.get(game, 0)
-                            has_all_rounds = expected_rounds > 0 and scheduled_rounds[game] >= expected_rounds
-                            if not (has_two_heats or has_all_rounds): continue
-
-                    if date not in booked: booked[date] = []
-                    
-                    conflict = False
-                    row_elim = is_elimination(stage)
-                    for b_start, b_end, b_stage, b_tier, b_game in booked[date]:
-                        if max(start, b_start) < min(end, b_end):
-                            b_elim = is_elimination(b_stage)
-                            if game == b_game and tier > 0: continue
-                            if not (row_elim or b_elim): conflict = True; break
-                                
-                    if not conflict:
-                        booked[date].append((start, end, stage, tier, game))
-                        schedule.append(row)
-                        scheduled_stages[game].append(stage)
-                        if 'heat' in stage_str_lower: scheduled_heats[game] += 1
-                        if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
-
-            output_df = pd.DataFrame(schedule).sort_values(['Date_parsed', 'Time'])
-
-    # --- ONLY SHOW CHARTS IF WE SUCCESSFULLY MATCHED DATA ---
-    if success_flag:
-        st.success("Success! Your custom itinerary is ready below.")
-
-        # ----------------------------------------------------
-        # OUTPUT DISPLAY (Tabs for Visual & Tabular)
-        # ----------------------------------------------------
-        import altair as alt
-
-        st.subheader("Your Personalized Itinerary")
-        
-        main_tab1, main_tab2 = st.tabs(["📊 Visual Schedule", "📋 Tabular Data"])
-        
-        def format_hhmm(t):
-            if pd.isna(t): return ""
-            h = int(t) % 24
-            m = int(round((t - int(t)) * 60))
-            return f"{h:02d}{m:02d}"
-
-        with main_tab1:
-            viz_df = output_df.copy()
-            
-            viz_df['Logical Date'] = viz_df.apply(
-                lambda row: row['Date_parsed'] - pd.Timedelta(days=1) if row['Time'] < 8 else row['Date_parsed'], 
-                axis=1
-            )
-            
-            viz_df['Plot Time'] = viz_df.apply(lambda row: row['Time'] + 24 if row['Time'] < 8 else row['Time'], axis=1)
-            viz_df['Plot End Time'] = viz_df['Plot Time'] + viz_df['Duration']
-            
-            viz_df['Start Time'] = viz_df['Time'].apply(format_hhmm)
-            viz_df['End Time'] = ((viz_df['Time'] + viz_df['Duration']) % 24).apply(format_hhmm)
-            
-            viz_df['Formatted Date'] = viz_df['Logical Date'].dt.strftime('%A, %b %d')
-            unique_dates = viz_df.sort_values('Logical Date')['Formatted Date'].unique()
-            
-            if len(unique_dates) > 0:
-                day_tabs = st.tabs(list(unique_dates))
-                
-                for idx, selected_date in enumerate(unique_dates):
-                    with day_tabs[idx]:
-                        day_df = viz_df[viz_df['Formatted Date'] == selected_date]
-                        
-                        base_chart = alt.Chart(day_df).encode(
-                            x2='Plot End Time',
-                            y=alt.Y('Event', sort=alt.EncodingSortField(field="Plot Time", order="ascending"), title=""),
-                            color=alt.Color('Event', legend=None),
-                            tooltip=['Event', 'Round/Heat', 'Location', 'Start Time', 'End Time', 'Duration']
-                        ).properties(
-                            width=800
-                        )
-
-                        x_scale = alt.Scale(domain=[8, 26], clamp=True)
-                        label_expr = "datum.value >= 24 ? (datum.value - 24 < 10 ? '0' + (datum.value - 24) : (datum.value - 24)) + '00' : (datum.value < 10 ? '0' + datum.value : datum.value) + '00'"
-                        
-                        bottom_axis_chart = base_chart.mark_bar(cornerRadius=4, height=20).encode(
-                            x=alt.X('Plot Time', title='Time (HHMM)', scale=x_scale, 
-                                    axis=alt.Axis(orient='bottom', tickCount=18, labelExpr=label_expr))
-                        )
-
-                        top_axis_chart = base_chart.mark_bar(opacity=0).encode(
-                            x=alt.X('Plot Time', title='', scale=x_scale, 
-                                    axis=alt.Axis(orient='top', tickCount=18, labelExpr=label_expr))
-                        )
-
-                        chart = alt.layer(bottom_axis_chart, top_axis_chart).resolve_scale(
-                            x='independent'
-                        ).interactive()
-
-                        st.altair_chart(chart, use_container_width=True)
-            else:
-                st.info("No events scheduled yet. Adjust your filters or constraints!")
-
-        with main_tab2:
-            table_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
-            table_df['Time'] = table_df['Time'].apply(format_hhmm)
-            st.dataframe(table_df, use_container_width=True)
-        
-        csv_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
-        csv_df['Time'] = csv_df['Time'].apply(format_hhmm)
-        csv = csv_df.to_csv(index=False).encode('utf-8')
-        
-        st.download_button(
-            label="Download Schedule as CSV",
-            data=csv,
-            file_name="wbc_itinerary.csv",
-            mime="text/csv"
-        )
-else:
-    st.info("👈 Please upload your personal boardgame collection CSV in the sidebar to populate your options!")
