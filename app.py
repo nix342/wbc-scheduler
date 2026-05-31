@@ -86,33 +86,33 @@ if uploaded_file is not None:
             )
             
     # ---------------------------------------------------------
-    # 6. Match WBC events to collection OR explicitly selected priorities
+    # --- SPINNER MOVED UP: Starts before the heavy lifting! ---
     # ---------------------------------------------------------
-    matches = []
-    for _, w_row in wbc.iterrows():
-        is_priority = w_row['Event'] in selected_priorities
-        matched_fav = False
+    with st.spinner('Crunching the convention matrix! Building your conflict-free itinerary...'):
         
-        for _, f_row in favs.iterrows():
-            if w_row['clean_name'] == f_row['clean_name'] or (len(w_row['clean_name']) > 5 and w_row['clean_name'] in f_row['clean_name']):
-                matches.append({**w_row.to_dict(), **f_row.to_dict()})
-                matched_fav = True
-                break
+        # We can remove the time.sleep(1.5) because the matching process takes long enough to show the spinner!
+        
+        matches = []
+        for _, w_row in wbc.iterrows():
+            is_priority = w_row['Event'] in selected_priorities
+            matched_fav = False
+            
+            for _, f_row in favs.iterrows():
+                if w_row['clean_name'] == f_row['clean_name'] or (len(w_row['clean_name']) > 5 and w_row['clean_name'] in f_row['clean_name']):
+                    matches.append({**w_row.to_dict(), **f_row.to_dict()})
+                    matched_fav = True
+                    break
+                    
+            if not matched_fav and is_priority:
+                priority_match = w_row.to_dict()
+                priority_match['rating'] = 10.0
+                matches.append(priority_match)
                 
-        if not matched_fav and is_priority:
-            priority_match = w_row.to_dict()
-            priority_match['rating'] = 10.0
-            matches.append(priority_match)
-            
-    if not matches:
-        st.warning("No matching games found between your favorites/priorities and the WBC schedule.")
-    else:
-        # --- NEW: MASSIVE VISUAL LOADING SPINNER ---
-        with st.spinner('Crunching the convention matrix! Building your conflict-free itinerary...'):
-            
-            # Artificial delay so the user actually sees the loading animation!
-            time.sleep(1.5) 
-            
+        if not matches:
+            st.warning("No matching games found between your favorites/priorities and the WBC schedule.")
+            success_flag = False
+        else:
+            success_flag = True
             matched = pd.DataFrame(matches)
             
             # --- TIME FILTERING (Arrival & Departure) ---
@@ -128,7 +128,6 @@ if uploaded_file is not None:
                 return True
                 
             matched = matched[matched.apply(is_within_convention_window, axis=1)]
-            # --------------------------------------------
             
             if exclude_demos:
                 matched = matched[~matched['Round/Heat'].astype(str).str.contains('Demo', case=False, na=False)]
@@ -152,9 +151,6 @@ if uploaded_file is not None:
             matched['priority_tier'] = matched.apply(calculate_priority_tier, axis=1)
             matched = matched.sort_values(['priority_tier', 'rating', 'Date_parsed', 'Time'], ascending=[False, False, True, True])
             
-            # ----------------------------------------------------
-            # ALGORITHMIC SCHEDULING LOGIC ENGINE
-            # ----------------------------------------------------
             schedule = []
             booked = {}
             scheduled_stages = {}
@@ -270,7 +266,8 @@ if uploaded_file is not None:
 
             output_df = pd.DataFrame(schedule).sort_values(['Date_parsed', 'Time'])
 
-        # --- The Spinner finishes here! ---
+    # --- ONLY SHOW CHARTS IF WE SUCCESSFULLY MATCHED DATA ---
+    if success_flag:
         st.success("Success! Your custom itinerary is ready below.")
 
         # ----------------------------------------------------
