@@ -30,6 +30,20 @@ arrival_time = st.sidebar.slider("Arrival Time (24h Clock)", 0, 23, 18)
 st.sidebar.header("2. Filters & Preferences")
 exclude_demos = st.sidebar.checkbox("Exclude Demo Rounds", value=True)
 rating_cutoff = st.sidebar.slider("Minimum BGG Rating to consider", 1, 10, 7)
+st.sidebar.header("2. Filters & Preferences")
+    exclude_demos = st.sidebar.checkbox("Exclude Demo Rounds", value=True)
+    rating_cutoff = st.sidebar.slider("Minimum BGG Rating to consider", 1, 10, 7)
+    
+    # NEW: Scheduling Philosophy Toggle
+    schedule_philosophy = st.sidebar.radio(
+        "Scheduling Strategy Preference",
+        options=[
+            "Maximize Playoff Chances (Prioritize multiple heats of the same games)", 
+            "Maximize Variety (Prioritize single heats of many different games)"
+        ],
+        index=0,
+        help="Playoff mode fills your schedule with repeat heats to unlock finals. Variety mode spreads your time across as many unique titles as possible."
+    )
 
 st.sidebar.header("3. Upload Data")
 uploaded_file = st.sidebar.file_uploader("Upload your BGG Collection CSV", type=["csv"])
@@ -127,6 +141,26 @@ if uploaded_file is not None:
             m = re.search(r'(?:Round|Heat)\s*(\d+)', str(stage_str), re.IGNORECASE)
             return int(m.group(1)) if m else None
 
+# ----------------------------------------------------
+        # ALGORITHMIC SCHEDULING LOGIC ENGINE (Updated)
+        # ----------------------------------------------------
+        schedule = []
+        booked = {}
+        scheduled_stages = {}
+        scheduled_heats = {}
+        scheduled_rounds = {}
+        
+        def get_round_number(stage_str):
+            m = re.search(r'Round (\d+)', str(stage_str))
+            return int(m.group(1)) if m else None
+
+        def is_elimination(stage_str):
+            return bool(re.search(r'quarterfinal|semifinal|final', str(stage_str), re.IGNORECASE))
+
+        # Determine if we need a unique first pass based on user toggle
+        use_variety_pass = "Maximize Variety" in schedule_philosophy
+        
+        # --- PASS 1 ---
         for _, row in matched.iterrows():
             date = row['Date']
             start = row['Time']
@@ -135,13 +169,6 @@ if uploaded_file is not None:
             stage = row['Round/Heat']
             tier = row['priority_tier']
             
-            # --- ENFORCE EARLY EXIT TOURNAMENT CAPS ---
-            if row['clean_name'] in game_caps:
-                stage_num = get_stage_number(stage)
-                # If it's a higher round/heat number, or an advanced playoff round, skip it!
-                if (stage_num is not None and stage_num > game_caps[row['clean_name']]) or is_elimination(stage):
-                    continue
-
             if game not in scheduled_stages:
                 scheduled_stages[game] = []
                 scheduled_heats[game] = 0
@@ -150,7 +177,20 @@ if uploaded_file is not None:
             past_stages = scheduled_stages[game]
             stage_str_lower = str(stage).lower()
             
-            # Skip progression check for forced manual priorities
+            # VARIETY FILTRATION: Skip duplicate heats on the first pass
+            if use_variety_pass and 'heat' in stage_str_lower and scheduled_heats[game] >= 1:
+                continue
+
+            # Enforce early exit tournament caps (from our previous update)
+            if row['clean_name'] in game_caps:
+                def get_stage_number(s):
+                    m = re.search(r'(?:Round|Heat)\s*(\d+)', str(s), re.IGNORECASE)
+                    return int(m.group(1)) if m else None
+                stage_num = get_stage_number(stage)
+                if (stage_num is not None and stage_num > game_caps[row['clean_name']]) or is_elimination(stage):
+                    continue
+            
+            # Strict Progression Check (skip for forced manual priorities)
             if tier < 2:
                 r_num = get_round_number(stage)
                 if r_num is not None and r_num > 1:
@@ -178,6 +218,49 @@ if uploaded_file is not None:
                 if 'heat' in stage_str_lower: scheduled_heats[game] += 1
                 if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
 
+        # --- PASS 2 (Only triggers if Variety Mode is active to fill gaps) ---
+        if use_variety_pass:
+            for _, row in matched.iterrows():
+                # Skip if this exact event row was already successfully booked in Pass 1
+                if any(r.name == row.name for r in schedule): continue
+                
+                date = row['Date']
+                start = row['Time']
+                end = start + row['Duration']
+                game = row['Event']
+                stage = row['Round/Heat']
+                tier = row['priority_tier']
+                stage_str_lower = str(stage).lower()
+                past_stages = scheduled_stages[game]
+
+                # Re-verify progression rules for the stragglers
+                if tier < 2:
+                    r_num = get_round_number(stage)
+                    if r_num is not None and r_num > 1:
+                        if not any(get_round_number(ps) == r_num - 1 for ps in past_stages): continue
+                    if is_elimination(stage):
+                        has_two_heats = scheduled_heats[game] >= 2
+                        expected_rounds = total_rounds.get(game, 0)
+                        has_all_rounds = expected_rounds > 0 and scheduled_rounds[game] >= expected_rounds
+                        if not (has_two_heats or has_all_rounds): continue
+
+                if date not in booked: booked[date] = []
+                
+                conflict = False
+                row_elim = is_elimination(stage)
+                for b_start, b_end, b_stage, b_tier, b_game in booked[date]:
+                    if max(start, b_start) < min(end, b_end):
+                        b_elim = is_elimination(b_stage)
+                        if game == b_game and tier > 0: continue
+                        if not (row_elim or b_elim): conflict = True; break
+                            
+                if not conflict:
+                    booked[date].append((start, end, stage, tier, game))
+                    schedule.append(row)
+                    scheduled_stages[game].append(stage)
+                    if 'heat' in stage_str_lower: scheduled_heats[game] += 1
+                    if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
+                        
         output_df = pd.DataFrame(schedule).sort_values(['Date_parsed', 'Time'])
         
         # Display Final Table
