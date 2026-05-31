@@ -283,22 +283,40 @@ if uploaded_file is not None:
             viz_df = output_df.copy()
             viz_df['End Time'] = viz_df['Time'] + viz_df['Duration']
             
-            # The .properties(width=800) forces the faceted rows to stretch horizontally
-            base_chart = alt.Chart(viz_df).mark_bar(cornerRadius=4, height=20).encode(
-                x=alt.X('Time', title='Hour of Day (24h)', scale=alt.Scale(domain=[8, 26])),
+            # Format dates for a clean dropdown menu
+            viz_df['Formatted Date'] = viz_df['Date_parsed'].dt.strftime('%A, %b %d')
+            unique_dates = viz_df['Formatted Date'].unique()
+            
+            # Day selector dropdown
+            selected_date = st.selectbox("Select Convention Day:", unique_dates)
+            
+            # Filter data to only show the chosen day
+            day_df = viz_df[viz_df['Formatted Date'] == selected_date]
+            
+            # Base encoding shared by both layers
+            base_chart = alt.Chart(day_df).encode(
                 x2='End Time',
                 y=alt.Y('Event', sort=alt.EncodingSortField(field="Time", order="ascending"), title=""),
                 color=alt.Color('Event', legend=None),
                 tooltip=['Event', 'Round/Heat', 'Location', 'Time', 'Duration']
             ).properties(
-                width=800  # <--- This fixes the squished width issue!
-            ).interactive()
-
-            chart = base_chart.facet(
-                row=alt.Row('Date_parsed:T', title='Convention Date', header=alt.Header(format='%A, %b %d'))
-            ).resolve_scale(
-                y='independent'
+                width=800
             )
+
+            # Layer 1: Visible colored bars with the bottom X-axis
+            bottom_axis_chart = base_chart.mark_bar(cornerRadius=4, height=20).encode(
+                x=alt.X('Time', title='Hour of Day (24h)', scale=alt.Scale(domain=[8, 26]), axis=alt.Axis(orient='bottom'))
+            )
+
+            # Layer 2: Invisible marks with the top X-axis
+            top_axis_chart = base_chart.mark_bar(opacity=0).encode(
+                x=alt.X('Time', title='', scale=alt.Scale(domain=[8, 26]), axis=alt.Axis(orient='top'))
+            )
+
+            # Layer them together and force independent X-scales so both axes are forced to render
+            chart = alt.layer(bottom_axis_chart, top_axis_chart).resolve_scale(
+                x='independent'
+            ).interactive()
 
             st.altair_chart(chart, use_container_width=True)
 
