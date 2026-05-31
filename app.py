@@ -51,45 +51,62 @@ if uploaded_file is not None:
     favs = coll[coll['rating'] >= rating_cutoff].sort_values('rating', ascending=False)
     favs['clean_name'] = favs['objectname'].apply(clean_name)
     
+# ---------------------------------------------------------
+    # 4. Dynamic Priority Multiselect (From Master WBC List)
+    # ---------------------------------------------------------
     st.sidebar.header("4. Priority Must-Play Games")
-    unique_fav_titles = sorted(favs['objectname'].unique())
+    unique_wbc_events = sorted(wbc['Event'].dropna().unique())
     selected_priorities = st.sidebar.multiselect(
-        "Select up to 3 'Must-Play' games to schedule first:",
-        options=unique_fav_titles,
+        "Select up to 3 'Must-Play' games to schedule first (even if not in your collection!):",
+        options=unique_wbc_events,
         max_selections=3
     )
     priority_cleans = [clean_name(title) for title in selected_priorities]
-
-    # 5. Limit Tournament Runs (Optional early exits)
+    
+    # ---------------------------------------------------------
+    # 5. Limit Tournament Runs
+    # ---------------------------------------------------------
     st.sidebar.header("5. Set Tournament Caps")
     with st.sidebar.expander("Exit Tournaments Early (Optional)"):
         games_to_cap = st.multiselect(
             "Select games you want to limit:",
-            options=unique_fav_titles,
+            options=unique_wbc_events, # Now also uses the full WBC list
             help="Choose games where you only plan to play the first few heats or rounds."
         )
         game_caps = {}
         for g in games_to_cap:
             game_caps[clean_name(g)] = st.number_input(
                 f"Max Round/Heat for {g}:",
-                min_value=1, max_value=10, value=1, step=1,
-                help="The scheduler will drop any round or heat numbering higher than this, including playoffs."
+                min_value=1, max_value=10, value=1, step=1
             )
-    
-    # Match WBC events to collection
+            
+    # ---------------------------------------------------------
+    # 6. Match WBC events to collection OR explicitly selected priorities
+    # ---------------------------------------------------------
     matches = []
     for _, w_row in wbc.iterrows():
+        is_priority = w_row['clean_name'] in priority_cleans
+        matched_fav = False
+        
         for _, f_row in favs.iterrows():
             if w_row['clean_name'] == f_row['clean_name'] or (len(w_row['clean_name']) > 5 and w_row['clean_name'] in f_row['clean_name']):
                 matches.append({**w_row.to_dict(), **f_row.to_dict()})
+                matched_fav = True
                 break
                 
+        # NEW LOGIC: If the game isn't in their BGG collection, but they selected it as a Must-Play:
+        if not matched_fav and is_priority:
+            # Force it into the schedule with a dummy 10/10 rating so the engine treats it as a favorite
+            priority_match = w_row.to_dict()
+            priority_match['rating'] = 10.0
+            matches.append(priority_match)
+            
     if not matches:
-        st.warning("No matching games found between your favorites and the WBC schedule.")
+        st.warning("No matching games found between your favorites/priorities and the WBC schedule.")
     else:
         matched = pd.DataFrame(matches)
         
-        # Filter by arrival
+        # Apply arrival filtering
         arrival_dt = pd.to_datetime(arrival_date)
         matched = matched[~((matched['Date_parsed'] < arrival_dt) | ((matched['Date_parsed'] == arrival_dt) & (matched['Time'] < arrival_time)))]
         
