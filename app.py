@@ -30,20 +30,16 @@ arrival_time = st.sidebar.slider("Arrival Time (24h Clock)", 0, 23, 18)
 st.sidebar.header("2. Filters & Preferences")
 exclude_demos = st.sidebar.checkbox("Exclude Demo Rounds", value=True)
 rating_cutoff = st.sidebar.slider("Minimum BGG Rating to consider", 1, 10, 7)
-st.sidebar.header("2. Filters & Preferences")
-    exclude_demos = st.sidebar.checkbox("Exclude Demo Rounds", value=True)
-    rating_cutoff = st.sidebar.slider("Minimum BGG Rating to consider", 1, 10, 7)
-    
-    # NEW: Scheduling Philosophy Toggle
-    schedule_philosophy = st.sidebar.radio(
-        "Scheduling Strategy Preference",
-        options=[
-            "Maximize Playoff Chances (Prioritize multiple heats of the same games)", 
-            "Maximize Variety (Prioritize single heats of many different games)"
-        ],
-        index=0,
-        help="Playoff mode fills your schedule with repeat heats to unlock finals. Variety mode spreads your time across as many unique titles as possible."
-    )
+# NEW: Scheduling Philosophy Toggle
+schedule_philosophy = st.sidebar.radio(
+    "Scheduling Strategy Preference",
+    options=[
+        "Maximize Playoff Chances (Prioritize multiple heats of the same games)", 
+        "Maximize Variety (Prioritize single heats of many different games)"
+    ],
+    index=0,
+    help="Playoff mode fills your schedule with repeat heats to unlock finals. Variety mode spreads your time across as many unique titles as possible."
+)
 
 st.sidebar.header("3. Upload Data")
 uploaded_file = st.sidebar.file_uploader("Upload your BGG Collection CSV", type=["csv"])
