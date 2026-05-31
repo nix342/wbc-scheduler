@@ -275,7 +275,27 @@ if uploaded_file is not None:
             output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']],
             use_container_width=True
         )
+
+        import altair as alt
+
+        st.subheader("Schedule Visualizer")
         
+        # Create an end time column for the chart
+        output_df['End Time'] = output_df['Time'] + output_df['Duration']
+        
+        # Create the Gantt chart using Altair
+        chart = alt.Chart(output_df).mark_bar().encode(
+            x=alt.X('Time', title='Hour of Day (24h)', scale=alt.Scale(domain=[8, 25])),
+            x2='End Time',
+            y=alt.Y('Event', sort=alt.EncodingSortField(field="Time", order="ascending")),
+            color=alt.Color('Event', legend=None),
+            tooltip=['Event', 'Round/Heat', 'Location', 'Time', 'Duration']
+        ).facet(
+            row=alt.Row('Date_parsed:T', title='Date')
+        ).interactive()
+
+        st.altair_chart(chart, use_container_width=True)
+
         csv = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Download Schedule as CSV",
