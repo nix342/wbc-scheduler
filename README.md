@@ -2,7 +2,7 @@
 
 An interactive web application built with [Streamlit](https://streamlit.io/) designed to help attendees of the World Boardgaming Championships (WBC) automatically generate a personalized, conflict-free convention itinerary based on their own board game collections.
 
-**🔗 [Access the Live App Here]([https://yourname-wbc-scheduler.streamlit.app](https://wbc-scheduler-nwri4ogu35dyu3hlxlv9pv.streamlit.app/))**
+**🔗 [Access the Live App Here](https://wbc-scheduler-nwri4ogu35dyu3hlxlv9pv.streamlit.app/)**
 
 ---
 
