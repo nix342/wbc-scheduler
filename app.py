@@ -279,44 +279,70 @@ if uploaded_file is not None:
         # Create the Main View controls
         main_tab1, main_tab2 = st.tabs(["📊 Visual Schedule", "📋 Tabular Data"])
         
+        # Time formatting helper: Converts 9.0 -> "0900", 24.0 -> "0000"
+        def format_hhmm(t):
+            if pd.isna(t): return ""
+            h = int(t) % 24
+            m = int(round((t - int(t)) * 60))
+            return f"{h:02d}{m:02d}"
+
         with main_tab1:
             viz_df = output_df.copy()
-            viz_df['End Time'] = viz_df['Time'] + viz_df['Duration']
             
-            # Format dates for clean tab labels and ensure they are chronological
-            viz_df['Formatted Date'] = viz_df['Date_parsed'].dt.strftime('%A, %b %d')
-            unique_dates = viz_df.sort_values('Date_parsed')['Formatted Date'].unique()
+            # LOGICAL DATE SHIFT: 
+            # If an event starts before 08:00, subtract a day so it maps to the previous night's tab.
+            viz_df['Logical Date'] = viz_df.apply(
+                lambda row: row['Date_parsed'] - pd.Timedelta(days=1) if row['Time'] < 8 else row['Date_parsed'], 
+                axis=1
+            )
+            
+            # PLOT TIME SHIFT: 
+            # 01:00 becomes 25.0 so it correctly plots to the right of 24:00 on the X-axis
+            viz_df['Plot Time'] = viz_df.apply(lambda row: row['Time'] + 24 if row['Time'] < 8 else row['Time'], axis=1)
+            viz_df['Plot End Time'] = viz_df['Plot Time'] + viz_df['Duration']
+            
+            # Create cleanly formatted string columns for the tooltips
+            viz_df['Start Time'] = viz_df['Time'].apply(format_hhmm)
+            viz_df['End Time'] = ((viz_df['Time'] + viz_df['Duration']) % 24).apply(format_hhmm)
+            
+            # Format dates for tab labels and ensure chronological ordering
+            viz_df['Formatted Date'] = viz_df['Logical Date'].dt.strftime('%A, %b %d')
+            unique_dates = viz_df.sort_values('Logical Date')['Formatted Date'].unique()
             
             if len(unique_dates) > 0:
-                # Create a nested tab for each day to make switching instantaneous!
                 day_tabs = st.tabs(list(unique_dates))
                 
                 for idx, selected_date in enumerate(unique_dates):
                     with day_tabs[idx]:
-                        # Filter data to only show the chosen day
+                        # Filter data to only show the chosen logical day
                         day_df = viz_df[viz_df['Formatted Date'] == selected_date]
                         
                         # Base encoding shared by both layers
                         base_chart = alt.Chart(day_df).encode(
-                            x2='End Time',
-                            y=alt.Y('Event', sort=alt.EncodingSortField(field="Time", order="ascending"), title=""),
+                            x2='Plot End Time',
+                            y=alt.Y('Event', sort=alt.EncodingSortField(field="Plot Time", order="ascending"), title=""),
                             color=alt.Color('Event', legend=None),
-                            tooltip=['Event', 'Round/Heat', 'Location', 'Time', 'Duration']
+                            tooltip=['Event', 'Round/Heat', 'Location', 'Start Time', 'End Time', 'Duration']
                         ).properties(
                             width=800
                         )
 
-                        # Lock the X-axis from 8 (08:00) to 26 (02:00 next day)
+                        # Lock the X-axis from 8 (0800) to 26 (0200 next day)
                         x_scale = alt.Scale(domain=[8, 26], clamp=True)
+                        
+                        # Custom Javascript to dynamically format the axis ticks to HHMM (e.g. 8 -> 0800, 25 -> 0100)
+                        label_expr = "datum.value >= 24 ? (datum.value - 24 < 10 ? '0' + (datum.value - 24) : (datum.value - 24)) + '00' : (datum.value < 10 ? '0' + datum.value : datum.value) + '00'"
                         
                         # Layer 1: Visible colored bars with the bottom X-axis
                         bottom_axis_chart = base_chart.mark_bar(cornerRadius=4, height=20).encode(
-                            x=alt.X('Time', title='Hour of Day (24h)', scale=x_scale, axis=alt.Axis(orient='bottom', tickCount=18))
+                            x=alt.X('Plot Time', title='Time (HHMM)', scale=x_scale, 
+                                    axis=alt.Axis(orient='bottom', tickCount=18, labelExpr=label_expr))
                         )
 
                         # Layer 2: Invisible marks with the top X-axis
                         top_axis_chart = base_chart.mark_bar(opacity=0).encode(
-                            x=alt.X('Time', title='', scale=x_scale, axis=alt.Axis(orient='top', tickCount=18))
+                            x=alt.X('Plot Time', title='', scale=x_scale, 
+                                    axis=alt.Axis(orient='top', tickCount=18, labelExpr=label_expr))
                         )
 
                         # Layer them together and force independent X-scales
@@ -329,18 +355,21 @@ if uploaded_file is not None:
                 st.info("No events scheduled yet. Adjust your filters or constraints!")
 
         with main_tab2:
-            st.dataframe(
-                output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']],
-                use_container_width=True
-            )
+            # Output Data Table using HHMM format
+            table_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
+            table_df['Time'] = table_df['Time'].apply(format_hhmm)
+            st.dataframe(table_df, use_container_width=True)
         
-        # --- CSV Export Button (Kept outside tabs so it's always visible) ---
-        csv = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].to_csv(index=False).encode('utf-8')
+        # --- CSV Export Button ---
+        csv_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
+        csv_df['Time'] = csv_df['Time'].apply(format_hhmm)
+        csv = csv_df.to_csv(index=False).encode('utf-8')
+        
         st.download_button(
             label="Download Schedule as CSV",
             data=csv,
             file_name="wbc_itinerary.csv",
             mime="text/csv"
         )
-else:
+    else:
     st.info("👈 Please upload your personal boardgame collection CSV in the sidebar to populate your options!")
