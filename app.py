@@ -116,7 +116,8 @@ if uploaded_file is not None:
             matched = pd.DataFrame(matches)
             
             # --- TIME FILTERING (Arrival & Departure) ---
-            arrival_dt = pd.to_datetime(arrival_date)            departure_dt = pd.to_datetime(departure_date)
+            arrival_dt = pd.to_datetime(arrival_date)
+            departure_dt = pd.to_datetime(departure_date)
             
             def is_within_convention_window(row):
                 if row['Date_parsed'] < arrival_dt: return False
