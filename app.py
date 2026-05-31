@@ -268,15 +268,8 @@ if uploaded_file is not None:
                     if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
 
         output_df = pd.DataFrame(schedule).sort_values(['Date_parsed', 'Time'])
-        
-        # Display Final Output Table
-        st.subheader("Your Personalized Itinerary")
-        st.dataframe(
-            output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']],
-            use_container_width=True
-        )
 
-# ----------------------------------------------------
+        # ----------------------------------------------------
         # OUTPUT DISPLAY (Tabs for Visual & Tabular)
         # ----------------------------------------------------
         import altair as alt
