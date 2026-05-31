@@ -276,37 +276,46 @@ if uploaded_file is not None:
             use_container_width=True
         )
 
-        # ----------------------------------------------------
-        # VISUALIZER (Altair Gantt Chart)
+# ----------------------------------------------------
+        # OUTPUT DISPLAY (Tabs for Visual & Tabular)
         # ----------------------------------------------------
         import altair as alt
 
-        st.subheader("Your Visual Itinerary")
+        st.subheader("Your Personalized Itinerary")
         
-        # Create a fresh copy of ONLY the final booked schedule
-        viz_df = output_df.copy()
+        # Create the Tab controls
+        tab1, tab2 = st.tabs(["📊 Visual Schedule", "📋 Tabular Data"])
         
-        # Calculate when each game ends for the chart blocks
-        viz_df['End Time'] = viz_df['Time'] + viz_df['Duration']
-        
-        # Build the base Gantt Chart
-        base_chart = alt.Chart(viz_df).mark_bar(cornerRadius=4, height=20).encode(
-            x=alt.X('Time', title='Hour of Day (24h)', scale=alt.Scale(domain=[8, 26])),
-            x2='End Time',
-            y=alt.Y('Event', sort=alt.EncodingSortField(field="Time", order="ascending"), title=""),
-            color=alt.Color('Event', legend=None),
-            tooltip=['Event', 'Round/Heat', 'Location', 'Time', 'Duration']
-        ).interactive()
+        with tab1:
+            viz_df = output_df.copy()
+            viz_df['End Time'] = viz_df['Time'] + viz_df['Duration']
+            
+            # The .properties(width=800) forces the faceted rows to stretch horizontally
+            base_chart = alt.Chart(viz_df).mark_bar(cornerRadius=4, height=20).encode(
+                x=alt.X('Time', title='Hour of Day (24h)', scale=alt.Scale(domain=[8, 26])),
+                x2='End Time',
+                y=alt.Y('Event', sort=alt.EncodingSortField(field="Time", order="ascending"), title=""),
+                color=alt.Color('Event', legend=None),
+                tooltip=['Event', 'Round/Heat', 'Location', 'Time', 'Duration']
+            ).properties(
+                width=800  # <--- This fixes the squished width issue!
+            ).interactive()
 
-        # Facet by date and force independent Y-axes so empty games hide
-        chart = base_chart.facet(
-            row=alt.Row('Date_parsed:T', title='Convention Date', header=alt.Header(format='%A, %b %d'))
-        ).resolve_scale(
-            y='independent'
-        )
+            chart = base_chart.facet(
+                row=alt.Row('Date_parsed:T', title='Convention Date', header=alt.Header(format='%A, %b %d'))
+            ).resolve_scale(
+                y='independent'
+            )
 
-        st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, use_container_width=True)
+
+        with tab2:
+            st.dataframe(
+                output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']],
+                use_container_width=True
+            )
         
+        # --- CSV Export Button (Kept outside tabs so it's always visible) ---
         csv = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Download Schedule as CSV",
