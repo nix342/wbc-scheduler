@@ -276,22 +276,28 @@ if uploaded_file is not None:
             use_container_width=True
         )
 
+        # ----------------------------------------------------
+        # VISUALIZER (Altair Gantt Chart)
+        # ----------------------------------------------------
         import altair as alt
 
-        st.subheader("Schedule Visualizer")
+        st.subheader("Your Visual Itinerary")
         
-        # Create an end time column for the chart
-        output_df['End Time'] = output_df['Time'] + output_df['Duration']
+        # Create a fresh copy of ONLY the final booked schedule
+        viz_df = output_df.copy()
         
-        # Create the Gantt chart using Altair
-        chart = alt.Chart(output_df).mark_bar().encode(
-            x=alt.X('Time', title='Hour of Day (24h)', scale=alt.Scale(domain=[8, 25])),
+        # Calculate when each game ends for the chart blocks
+        viz_df['End Time'] = viz_df['Time'] + viz_df['Duration']
+        
+        # Build the Gantt Chart
+        chart = alt.Chart(viz_df).mark_bar(cornerRadius=4, height=20).encode(
+            x=alt.X('Time', title='Hour of Day (24h)', scale=alt.Scale(domain=[8, 26])),
             x2='End Time',
-            y=alt.Y('Event', sort=alt.EncodingSortField(field="Time", order="ascending")),
+            y=alt.Y('Event', sort=alt.EncodingSortField(field="Time", order="ascending"), title=""),
             color=alt.Color('Event', legend=None),
             tooltip=['Event', 'Round/Heat', 'Location', 'Time', 'Duration']
         ).facet(
-            row=alt.Row('Date_parsed:T', title='Date')
+            row=alt.Row('Date_parsed:T', title='Convention Date')
         ).interactive()
 
         st.altair_chart(chart, use_container_width=True)
