@@ -371,5 +371,3 @@ if uploaded_file is not None:
             file_name="wbc_itinerary.csv",
             mime="text/csv"
         )
-    else:
-    st.info("👈 Please upload your personal boardgame collection CSV in the sidebar to populate your options!")
