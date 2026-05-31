@@ -2,20 +2,21 @@
 
 An interactive web application built with [Streamlit](https://streamlit.io/) designed to help attendees of the World Boardgaming Championships (WBC) automatically generate a personalized, conflict-free convention itinerary based on their own board game collections.
 
-**🔗 [Access the Live App Here](https://wbc-scheduler-nwri4ogu35dyu3hlxlv9pv.streamlit.app/)**
-
----
+**🔗 [Access the Live App Here](https://wbc-scheduler.streamlit.app)** ---
 
 ## ✨ Features
 
 * **BGG Collection Integration:** Upload your personal BoardGameGeek (BGG) collection CSV to automatically filter the massive WBC schedule down to the games you actually know, own, and love.
+* **Interactive Visual Dashboard:** View your itinerary in a clean, day-by-day Gantt chart visualization, complete with military-time axis formatting and chronological sorting.
+* **The "Night Shift" Logic:** Convention gaming goes late! Any event starting between midnight and 8:00 AM is logically grouped into the previous day's visual tab, perfectly aligning with how gamers actually experience the con.
 * **Dynamic Priority Engine:** Flag up to 3 "Must-Play" games. The algorithm will aggressively schedule these top-tier picks first and wrap the rest of your itinerary around them.
 * **Tournament Capping:** Don't want to commit to a 5-round marathon? Set early-exit caps (e.g., "Only schedule Round 1 of Combat Commander") to free up your calendar.
+* **Exclusion List (Ban List):** Love a game but don't want to play it at the convention? Easily flag specific titles to be completely ignored by the scheduling matrix.
 * **Dual Scheduling Philosophies:**
   * *The Medalist (Playoff Mode):* Prioritizes booking multiple heats of the same game to maximize your chances of advancing to the Semifinals and Finals.
   * *The Tourist (Variety Mode):* Skips duplicate heats to maximize the sheer number of unique games you get to play.
 * **Travel-Aware:** Input your arrival and departure dates/times, and the app will automatically prune any events that start before you arrive or end after you need to leave.
-* **CSV Export:** Download your personalized itinerary, complete with official GM and Location/Room data, straight to your device.
+* **CSV Export:** Download your personalized tabular itinerary, complete with official GM and Location/Room data, straight to your device.
 
 ---
 
@@ -30,11 +31,12 @@ To use this scheduler, you will need a CSV export of your BoardGameGeek collecti
 4. Save the file to your computer.
 
 **Generating your Schedule:**
-1. Open the [WBC Scheduler App](#).
+1. Open the [WBC Scheduler App](https://wbc-scheduler.streamlit.app).
 2. Set your convention arrival and departure times in the sidebar.
 3. Upload your BGG CSV file.
-4. Select your "Must Play" priority games and adjust any tournament caps.
-5. View your custom itinerary and click **Download Schedule as CSV** to save it!
+4. Select your "Must Play" priorities, adjust your tournament caps, and add any exclusions.
+5. Watch the matrix crunch your schedule! View your results on the **Visual Schedule** timeline or the **Tabular Data** grid.
+6. Click **Download Schedule as CSV** to save it!
 
 ---
 
