@@ -49,6 +49,22 @@ if uploaded_file is not None:
         max_selections=3
     )
     priority_cleans = [clean_name(title) for title in selected_priorities]
+
+    # 5. Limit Tournament Runs (Optional early exits)
+    st.sidebar.header("5. Set Tournament Caps")
+    with st.sidebar.expander("Exit Tournaments Early (Optional)"):
+        games_to_cap = st.multiselect(
+            "Select games you want to limit:",
+            options=unique_fav_titles,
+            help="Choose games where you only plan to play the first few heats or rounds."
+        )
+        game_caps = {}
+        for g in games_to_cap:
+            game_caps[clean_name(g)] = st.number_input(
+                f"Max Round/Heat for {g}:",
+                min_value=1, max_value=10, value=1, step=1,
+                help="The scheduler will drop any round or heat numbering higher than this, including playoffs."
+            )
     
     # Match WBC events to collection
     matches = []
@@ -106,6 +122,11 @@ if uploaded_file is not None:
         def is_elimination(stage_str):
             return bool(re.search(r'quarterfinal|semifinal|final', str(stage_str), re.IGNORECASE))
 
+        # Helper function to grab numbers out of 'Round 2/5' or 'Heat 1/3'
+        def get_stage_number(stage_str):
+            m = re.search(r'(?:Round|Heat)\s*(\d+)', str(stage_str), re.IGNORECASE)
+            return int(m.group(1)) if m else None
+
         for _, row in matched.iterrows():
             date = row['Date']
             start = row['Time']
@@ -114,6 +135,13 @@ if uploaded_file is not None:
             stage = row['Round/Heat']
             tier = row['priority_tier']
             
+            # --- ENFORCE EARLY EXIT TOURNAMENT CAPS ---
+            if row['clean_name'] in game_caps:
+                stage_num = get_stage_number(stage)
+                # If it's a higher round/heat number, or an advanced playoff round, skip it!
+                if (stage_num is not None and stage_num > game_caps[row['clean_name']]) or is_elimination(stage):
+                    continue
+
             if game not in scheduled_stages:
                 scheduled_stages[game] = []
                 scheduled_heats[game] = 0
