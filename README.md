@@ -37,14 +37,3 @@ To use this scheduler, you will need a CSV export of your BoardGameGeek collecti
 4. Select your "Must Play" priorities, adjust your tournament caps, and add any exclusions.
 5. Watch the matrix crunch your schedule! View your results on the **Visual Schedule** timeline or the **Tabular Data** grid.
 6. Click **Download Schedule as CSV** to save it!
-
----
-
-## 🛠️ Local Development & Setup
-
-If you want to run this app locally on your own machine, follow these steps:
-
-**1. Clone the repository:**
-```bash
-git clone [https://github.com/yourusername/wbc-scheduler.git](https://github.com/yourusername/wbc-scheduler.git)
-cd wbc-scheduler
