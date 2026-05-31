@@ -289,19 +289,24 @@ if uploaded_file is not None:
         # Calculate when each game ends for the chart blocks
         viz_df['End Time'] = viz_df['Time'] + viz_df['Duration']
         
-        # Build the Gantt Chart
-        chart = alt.Chart(viz_df).mark_bar(cornerRadius=4, height=20).encode(
+        # Build the base Gantt Chart
+        base_chart = alt.Chart(viz_df).mark_bar(cornerRadius=4, height=20).encode(
             x=alt.X('Time', title='Hour of Day (24h)', scale=alt.Scale(domain=[8, 26])),
             x2='End Time',
             y=alt.Y('Event', sort=alt.EncodingSortField(field="Time", order="ascending"), title=""),
             color=alt.Color('Event', legend=None),
             tooltip=['Event', 'Round/Heat', 'Location', 'Time', 'Duration']
-        ).facet(
-            row=alt.Row('Date_parsed:T', title='Convention Date')
         ).interactive()
 
-        st.altair_chart(chart, use_container_width=True)
+        # Facet by date and force independent Y-axes so empty games hide
+        chart = base_chart.facet(
+            row=alt.Row('Date_parsed:T', title='Convention Date', header=alt.Header(format='%A, %b %d'))
+        ).resolve_scale(
+            y='independent'
+        )
 
+        st.altair_chart(chart, use_container_width=True)
+        
         csv = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Download Schedule as CSV",
