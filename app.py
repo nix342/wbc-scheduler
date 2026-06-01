@@ -41,7 +41,6 @@ departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, 15)
 st.sidebar.header("2. Filters & Preferences")
 exclude_demos = st.sidebar.checkbox("Exclude Demo Rounds", value=True)
 
-# --- GAP FILLER TOGGLE ---
 fill_gaps = st.sidebar.checkbox("Fill Empty Time Slots", value=False, help="Automatically suggest other available convention games during your downtime.")
 
 rating_cutoff = st.sidebar.slider("Minimum BGG Rating to consider", 1, 10, 7)
@@ -356,10 +355,16 @@ else:
         with main_tab1:
             viz_df = output_df.copy()
             
-            # --- NEW: Check if the event is a playoff round ---
-            viz_df['Is_Elimination'] = viz_df['Round/Heat'].apply(
-                lambda x: bool(re.search(r'quarterfinal|semifinal|final', str(x), re.IGNORECASE))
-            )
+            # --- NEW: Function to color-code the elimination borders ---
+            def get_border_color(stage):
+                s = str(stage).lower()
+                # Order matters here! Quarter -> Semi -> Final
+                if 'quarterfinal' in s: return '#cd7f32'  # Bronze
+                if 'semifinal' in s: return '#c0c0c0'     # Silver
+                if 'final' in s: return '#ffd700'         # Gold
+                return 'transparent'
+                
+            viz_df['Border_Color'] = viz_df['Round/Heat'].apply(get_border_color)
             
             viz_df['Logical Date'] = viz_df.apply(
                 lambda row: row['Date_parsed'] - pd.Timedelta(days=1) if row['Time'] < 8 else row['Date_parsed'], 
@@ -394,13 +399,12 @@ else:
                         x_scale = alt.Scale(domain=[8, 26], clamp=True)
                         label_expr = "datum.value >= 24 ? (datum.value - 24 < 10 ? '0' + (datum.value - 24) : (datum.value - 24)) + '00' : (datum.value < 10 ? '0' + datum.value : datum.value) + '00'"
                         
-                        # --- NEW: Added conditional strokes to highlight elimination rounds! ---
+                        # --- REMOVED dashed strokes, ADDED solid mapped colors! ---
                         bottom_axis_chart = base_chart.mark_bar(cornerRadius=4, height=20).encode(
                             x=alt.X('Plot Time', title='Time (HHMM)', scale=x_scale, 
                                     axis=alt.Axis(orient='bottom', tickCount=18, labelExpr=label_expr)),
-                            stroke=alt.condition(alt.datum.Is_Elimination, alt.value('gold'), alt.value('transparent')),
-                            strokeDash=alt.condition(alt.datum.Is_Elimination, alt.value([5, 5]), alt.value([0])),
-                            strokeWidth=alt.condition(alt.datum.Is_Elimination, alt.value(3), alt.value(0))
+                            stroke=alt.Stroke('Border_Color:N', scale=None),
+                            strokeWidth=alt.condition(alt.datum.Border_Color != 'transparent', alt.value(3), alt.value(0))
                         )
 
                         top_axis_chart = base_chart.mark_bar(opacity=0).encode(
