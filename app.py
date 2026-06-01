@@ -9,7 +9,6 @@ st.write("Upload your BoardGameGeek collection CSV to generate a personalized, p
 
 # ---------------------------------------------------------
 # --- THE MASTER UI SLOT ---
-# This reserves a fixed spot on the screen for ALL messages!
 # ---------------------------------------------------------
 status_area = st.empty()
 
@@ -56,10 +55,8 @@ schedule_philosophy = st.sidebar.radio(
 st.sidebar.header("3. Upload Data")
 uploaded_file = st.sidebar.file_uploader("Upload your BGG Collection CSV", type=["csv"])
 
-# If no file is uploaded, put the prompt inside our reserved UI slot!
 if uploaded_file is None:
     status_area.info("👈 Please upload your personal boardgame collection CSV in the sidebar to populate your options!")
-    
 else:
     coll = pd.read_csv(uploaded_file)
     coll['rating'] = pd.to_numeric(coll['rating'], errors='coerce')
@@ -68,7 +65,7 @@ else:
     favs['clean_name'] = favs['objectname'].apply(clean_name)
     
     # ---------------------------------------------------------
-    # 4. Dynamic Priority Multiselect
+    # 4. Dynamic Priority & 5. Limits & 6. Exclusions
     # ---------------------------------------------------------
     st.sidebar.header("4. Priority Must-Play Games")
     unique_wbc_events = sorted(wbc['Event'].dropna().unique())
@@ -78,9 +75,6 @@ else:
         max_selections=3
     )
     
-    # ---------------------------------------------------------
-    # 5. Limit Tournament Runs
-    # ---------------------------------------------------------
     st.sidebar.header("5. Set Tournament Caps")
     with st.sidebar.expander("Exit Tournaments Early (Optional)"):
         games_to_cap = st.multiselect(
@@ -95,9 +89,6 @@ else:
                 min_value=1, max_value=10, value=1, step=1
             )
             
-    # ---------------------------------------------------------
-    # 6. Exclude Games (The "Ban" List)
-    # ---------------------------------------------------------
     st.sidebar.header("6. Exclude Games")
     with st.sidebar.expander("Skip specific games (Optional)"):
         games_to_exclude = st.multiselect(
@@ -113,7 +104,6 @@ else:
     status_type = ""
     success_flag = False
 
-    # Route the spinner directly into our reserved UI slot!
     with status_area.container():
         with st.spinner('Crunching the convention matrix! Building your conflict-free itinerary...'):
             
@@ -301,22 +291,19 @@ else:
                         status_type = "success"
                         success_flag = True
 
-    # ----------------------------------------------------
-    # --- OVERWRITE THE SLOT WITH THE FINAL MESSAGE ---
-    # ----------------------------------------------------
     if status_type == "warning":
         status_area.warning(status_message)
     elif status_type == "success":
         status_area.success(status_message)
 
-    # --- ONLY SHOW CHARTS IF WE SUCCESSFULLY MATCHED DATA ---
     if success_flag:
         
         import altair as alt
 
         st.subheader("Your Personalized Itinerary")
         
-        main_tab1, main_tab2 = st.tabs(["📊 Visual Schedule", "📋 Tabular Data"])
+        # --- NEW: Added a 3rd Tab for Metrics! ---
+        main_tab1, main_tab2, main_tab3 = st.tabs(["📊 Visual Schedule", "📋 Tabular Data", "📈 Custom Metrics"])
         
         def format_hhmm(t):
             if pd.isna(t): return ""
@@ -382,7 +369,42 @@ else:
             table_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
             table_df['Time'] = table_df['Time'].apply(format_hhmm)
             st.dataframe(table_df, use_container_width=True)
-        
+            
+        # ----------------------------------------------------
+        # --- NEW: METRICS DASHBOARD TAB ---
+        # ----------------------------------------------------
+        with main_tab3:
+            st.markdown("### Convention Stats")
+            
+            # 1. Calculate the numbers
+            total_events = len(output_df)
+            unique_games = output_df['Event'].nunique()
+            total_hours = output_df['Duration'].sum()
+            avg_rating = output_df['rating'].mean()
+
+            # 2. Layout 4 columns side-by-side
+            col1, col2, col3, col4 = st.columns(4)
+            
+            # 3. Paint the massive metric numbers
+            col1.metric(label="Total Sessions", value=total_events)
+            col2.metric(label="Unique Games", value=unique_games)
+            col3.metric(label="Total Hours", value=f"{total_hours:g} hrs")
+            
+            # Clean up the rating so it doesn't show 5 decimal places
+            if pd.notna(avg_rating):
+                col4.metric(label="Avg BGG Rating", value=f"{avg_rating:.1f}")
+            else:
+                col4.metric(label="Avg BGG Rating", value="N/A")
+                
+            st.divider()
+            
+            # A fun extra insight: What game are you playing the most?
+            if not output_df.empty:
+                most_played = output_df['Event'].value_counts().idxmax()
+                most_played_count = output_df['Event'].value_counts().max()
+                st.markdown(f"**🏅 Most Played Game:** {most_played} ({most_played_count} scheduled sessions)")
+
+        # --- CSV EXPORT (Kept below everything) ---
         csv_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
         csv_df['Time'] = csv_df['Time'].apply(format_hhmm)
         csv = csv_df.to_csv(index=False).encode('utf-8')
