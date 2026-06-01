@@ -13,12 +13,21 @@ def load_wbc_schedule():
 def clean_name(name):
     return re.sub(r'[^a-z0-9]', '', str(name).lower()) if pd.notna(name) else ""
 
-def is_valid_round(stage_str):
+def is_valid_round(row):
+    stage_str = row['Round/Heat']
+    event_str = row['Event']
     s = str(stage_str).lower()
+    e = str(event_str).lower()
+    
+    # Exception 1: Juniors events are valid games, even if they lack round info
+    if 'junior' in s or 'junior' in e: return True
+    # Exception 2: Demos are valid games
+    if 'demo' in s: return True 
+    
     if pd.isna(stage_str) or s.strip() in ['', 'nan', 'none']: return False
     if bool(re.search(r'\d', s)): return True
     if bool(re.search(r'quarterfinal|semifinal|final|mulligan', s)): return True
-    if 'demo' in s: return True 
+
     return False
 
 def format_hhmm(t):
@@ -31,10 +40,14 @@ def get_border_color(row):
     stage = str(row['Round/Heat']).lower()
     game = str(row['Event']).lower()
     
-    if not is_valid_round(row['Round/Heat']): return '#0000FF' # Blue for Seminars/Meetings
+    # 1. Explicitly check for specific event types FIRST
     if 'junior' in stage or 'junior' in game: return '#00FF00' # Green for Juniors
     if 'demo' in stage: return '#FFFFFF'                       # White for Demos
     
+    # 2. THEN check if it lacks round info (Seminars/Meetings)
+    if not is_valid_round(row): return '#0000FF'               # Blue for Seminars/Meetings
+    
+    # 3. Finally, check for Playoffs
     if 'quarterfinal' in stage: return '#cd7f32' 
     if 'semifinal' in stage: return '#c0c0c0'     
     if 'final' in stage: return '#ffd700'         
