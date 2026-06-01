@@ -355,13 +355,11 @@ else:
         with main_tab1:
             viz_df = output_df.copy()
             
-            # --- NEW: Function to color-code the elimination borders ---
             def get_border_color(stage):
                 s = str(stage).lower()
-                # Order matters here! Quarter -> Semi -> Final
-                if 'quarterfinal' in s: return '#cd7f32'  # Bronze
-                if 'semifinal' in s: return '#c0c0c0'     # Silver
-                if 'final' in s: return '#ffd700'         # Gold
+                if 'quarterfinal' in s: return '#cd7f32' 
+                if 'semifinal' in s: return '#c0c0c0'     
+                if 'final' in s: return '#ffd700'         
                 return 'transparent'
                 
             viz_df['Border_Color'] = viz_df['Round/Heat'].apply(get_border_color)
@@ -399,7 +397,6 @@ else:
                         x_scale = alt.Scale(domain=[8, 26], clamp=True)
                         label_expr = "datum.value >= 24 ? (datum.value - 24 < 10 ? '0' + (datum.value - 24) : (datum.value - 24)) + '00' : (datum.value < 10 ? '0' + datum.value : datum.value) + '00'"
                         
-                        # --- REMOVED dashed strokes, ADDED solid mapped colors! ---
                         bottom_axis_chart = base_chart.mark_bar(cornerRadius=4, height=20).encode(
                             x=alt.X('Plot Time', title='Time (HHMM)', scale=x_scale, 
                                     axis=alt.Axis(orient='bottom', tickCount=18, labelExpr=label_expr)),
@@ -455,14 +452,54 @@ else:
                 most_played_count = output_df['Event'].value_counts().max()
                 st.markdown(f"**🏅 Most Played Game:** {most_played} ({most_played_count} scheduled sessions)")
 
-        # --- CSV EXPORT ---
+        # ----------------------------------------------------
+        # --- NEW: SCHEDULE EXPORT AREA ---
+        # ----------------------------------------------------
+        st.divider()
+        st.markdown("### Export Your Schedule")
+        
+        # 1. Standard Formatting for Regular CSV
         csv_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
         csv_df['Time'] = csv_df['Time'].apply(format_hhmm)
-        csv = csv_df.to_csv(index=False).encode('utf-8')
+        standard_csv = csv_df.to_csv(index=False).encode('utf-8')
         
-        st.download_button(
-            label="Download Schedule as CSV",
-            data=csv,
-            file_name="wbc_itinerary.csv",
-            mime="text/csv"
-        )
+        # 2. Advanced Formatting for Google Calendar CSV
+        gcal_df = pd.DataFrame()
+        gcal_df['Subject'] = output_df['Event'] + " (" + output_df['Round/Heat'].astype(str) + ")"
+        
+        # We need true Datetime objects for Google to understand the hours
+        start_dts = output_df['Date_parsed'] + pd.to_timedelta(output_df['Time'], unit='h')
+        end_dts = output_df['Date_parsed'] + pd.to_timedelta(output_df['Time'] + output_df['Duration'], unit='h')
+        
+        gcal_df['Start Date'] = start_dts.dt.strftime('%m/%d/%Y')
+        gcal_df['Start Time'] = start_dts.dt.strftime('%I:%M %p')
+        gcal_df['End Date'] = end_dts.dt.strftime('%m/%d/%Y')
+        gcal_df['End Time'] = end_dts.dt.strftime('%I:%M %p')
+        gcal_df['All Day Event'] = 'False'
+        
+        # Safely handle missing GMs and Locations
+        gcal_df['Description'] = 'GM: ' + output_df.get('GM', 'TBD').fillna('TBD').astype(str)
+        gcal_df['Location'] = output_df.get('Location', 'TBD').fillna('TBD').astype(str)
+        
+        gcal_csv = gcal_df.to_csv(index=False).encode('utf-8')
+        
+        # Display side-by-side buttons
+        colA, colB = st.columns(2)
+        with colA:
+            st.download_button(
+                label="📥 Download Standard CSV",
+                data=standard_csv,
+                file_name="wbc_itinerary.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        with colB:
+            st.download_button(
+                label="📅 Download Google Calendar Sync",
+                data=gcal_csv,
+                file_name="wbc_gcal_import.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+        st.caption("*To import into Google Calendar: Open Google Calendar on a desktop > Click the Gear Icon (Settings) > Select 'Import & Export' > Upload `wbc_gcal_import.csv`.*")
