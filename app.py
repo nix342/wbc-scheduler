@@ -17,13 +17,11 @@ st.divider()
 # ---------------------------------------------------------
 # --- BROWSER LOCAL STORAGE BOOTSTRAP ---
 # ---------------------------------------------------------
-# We use st_javascript to ask the browser for saved preferences. 
-# It returns 0 on the very first frame while it evaluates.
 ls_result = st_javascript("localStorage.getItem('wbc_prefs') || 'NONE';")
 
 if "prefs" not in st.session_state:
     if ls_result == 0:
-        st.stop()  # Pause for a split-second to let the browser return the data
+        st.stop()  
     elif ls_result == "NONE":
         st.session_state.prefs = {}
     else:
@@ -32,7 +30,6 @@ if "prefs" not in st.session_state:
         except:
             st.session_state.prefs = {}
 
-# Store them cleanly in a variable to use for all our UI defaults!
 prefs = st.session_state.prefs
 
 # ---------------------------------------------------------
@@ -119,8 +116,16 @@ with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
     st.divider()
     
     st.markdown("**Algorithm Preferences**")
+    
+    # --- NEW EXCLUSION FILTERS ---
     def_demo = prefs.get("demo", True)
     exclude_demos = st.checkbox("Exclude Demo Rounds", value=def_demo)
+    
+    def_juniors = prefs.get("juniors", True)
+    exclude_juniors = st.checkbox("Exclude Juniors Events", value=def_juniors)
+    
+    def_no_round = prefs.get("no_round", True)
+    exclude_no_round = st.checkbox("Exclude Seminars & Meetings (No Round Info)", value=def_no_round, help="Skips events without formal heats, such as board meetings or open gaming.")
     
     def_fill = prefs.get("fill", False)
     fill_gaps = st.checkbox("Fill Empty Time Slots", value=def_fill, help="Automatically suggest other available convention games during your downtime.")
@@ -152,6 +157,8 @@ if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
         "cap": games_to_cap,
         "c_caps": game_caps,
         "demo": exclude_demos,
+        "juniors": exclude_juniors,     # Saved!
+        "no_round": exclude_no_round,   # Saved!
         "fill": fill_gaps,
         "rate": rating_cutoff,
         "phil": options.index(schedule_philosophy)
@@ -217,11 +224,22 @@ else:
                     
                 matched = matched[matched.apply(is_within_convention_window, axis=1)]
                 
+                # --- APPLYING THE NEW FILTERS ---
                 if exclude_demos:
                     matched = matched[~matched['Round/Heat'].astype(str).str.contains('Demo', case=False, na=False)]
                 
+                if exclude_juniors:
+                    matched = matched[~matched['Event'].astype(str).str.contains('Junior', case=False, na=False)]
+                    matched = matched[~matched['Round/Heat'].astype(str).str.contains('Junior', case=False, na=False)]
+                
+                if exclude_no_round:
+                    # Drop games where the Round/Heat column is blank or completely missing
+                    matched = matched[matched['Round/Heat'].notna()]
+                    matched = matched[matched['Round/Heat'].astype(str).str.strip() != '']
+                    matched = matched[~matched['Round/Heat'].astype(str).str.lower().isin(['nan', 'none'])]
+                
                 if matched.empty:
-                    status_message = "Your arrival/departure constraints removed all remaining games from consideration!"
+                    status_message = "Your constraints (or arrival/departure times) removed all remaining games from consideration!"
                     status_type = "warning"
                 else:
                     total_rounds = {}
@@ -366,9 +384,13 @@ else:
                             game = row['Event']
                             stage = row['Round/Heat']
                             stage_str_lower = str(stage).lower()
+                            game_str_lower = str(game).lower()
                             
+                            # Standard Safety Checks & New Exclusions
                             if game in games_to_exclude: continue
                             if exclude_demos and 'demo' in stage_str_lower: continue
+                            if exclude_juniors and ('junior' in stage_str_lower or 'junior' in game_str_lower): continue
+                            if exclude_no_round and (pd.isna(stage) or stage_str_lower.strip() in ['', 'nan', 'none']): continue
                             if not is_within_convention_window(row): continue
                             
                             if row['Event'] in game_caps:
