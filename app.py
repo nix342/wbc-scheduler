@@ -383,8 +383,16 @@ if proceed:
         standard_csv = csv_df.to_csv(index=False).encode('utf-8')
         
         gcal_df = pd.DataFrame()
-        gcal_df['Subject'] = output_df['Event'] + " (" + output_df['Round/Heat'].astype(str) + ")"
         
+        # Create a clean Subject line that drops the parenthesis if the Round is empty
+        def clean_gcal_subject(row):
+            r = str(row['Round/Heat'])
+            if pd.isna(row['Round/Heat']) or r.strip() in ['', 'nan', 'none']:
+                return str(row['Event'])
+            return f"{row['Event']} ({row['Round/Heat']})"
+        
+        gcal_df['Subject'] = output_df.apply(clean_gcal_subject, axis=1)
+
         start_dts = output_df['Date_parsed'] + pd.to_timedelta(output_df['Time'], unit='h')
         end_dts = output_df['Date_parsed'] + pd.to_timedelta(output_df['Time'] + output_df['Duration'], unit='h')
         
