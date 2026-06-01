@@ -331,7 +331,6 @@ if proceed:
             table_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
             table_df['Time'] = table_df['Time'].apply(format_hhmm)
             
-            # Create a clean Subject line that drops the parenthesis if the Round is empty
             def clean_gcal_subject(row):
                 r = str(row['Round/Heat'])
                 if pd.isna(row['Round/Heat']) or r.strip() in ['', 'nan', 'none']:
@@ -347,7 +346,6 @@ if proceed:
         with main_tab3:
             stats_df = output_df.copy()
             
-            # Calculate Logical Date so late-night games count towards the correct previous day
             stats_df['Logical Date'] = stats_df.apply(
                 lambda row: row['Date_parsed'] - pd.Timedelta(days=1) if row['Time'] < 8 else row['Date_parsed'], 
                 axis=1
@@ -383,19 +381,35 @@ if proceed:
             st.divider()
             
             if not stats_df.empty:
+                
+                # --- NEW GAP CALCULATION MATH ---
+                stats_df['start_dt'] = stats_df['Date_parsed'] + pd.to_timedelta(stats_df['Time'], unit='h')
+                stats_df['end_dt'] = stats_df['Date_parsed'] + pd.to_timedelta(stats_df['Time'] + stats_df['Duration'], unit='h')
+                
+                # Sort chronologically to find empty holes between overlapping brackets
+                stats_df = stats_df.sort_values('start_dt').reset_index(drop=True)
+                stats_df['max_end_so_far'] = stats_df['end_dt'].cummax().shift(1)
+                stats_df['gap'] = stats_df['start_dt'] - stats_df['max_end_so_far']
+                
+                max_gap_hours = 0
+                gap_start_time = ""
+                
+                if len(stats_df) > 1:
+                    max_gap_idx = stats_df['gap'].idxmax()
+                    max_gap_td = stats_df.loc[max_gap_idx, 'gap']
+                    
+                    if pd.notna(max_gap_td) and max_gap_td.total_seconds() > 0:
+                        max_gap_hours = max_gap_td.total_seconds() / 3600.0
+                        gap_start_time = stats_df.loc[max_gap_idx, 'max_end_so_far'].strftime('%A %I:%M %p')
+
                 # --- WRITTEN SUMMARY ---
                 st.markdown("### 📝 Schedule Summary")
                 first_event = stats_df.iloc[0]
                 last_event = stats_df.iloc[-1]
                 
-                # Calculations for achievements and summary
                 time_spent_by_game = stats_df.groupby('Event')['Duration'].sum()
                 most_time_game = time_spent_by_game.idxmax()
                 most_time_hours = time_spent_by_game.max()
-                
-                hours_per_day = stats_df.groupby('Formatted Date')['Duration'].sum()
-                ironman_day = hours_per_day.idxmax()
-                ironman_hours = hours_per_day.max()
 
                 most_played = stats_df['Event'].value_counts().idxmax()
                 most_played_count = stats_df['Event'].value_counts().max()
@@ -408,7 +422,10 @@ if proceed:
                 summary_text = f"Your WBC 2026 adventure kicks off on **{start_day}** with **{start_game}**. "
                 summary_text += f"Over the convention, you'll spend **{total_hours:g} hours** at the tables across **{total_events} sessions**, playing **{unique_games} unique games**. "
                 summary_text += f"Your primary focus will be **{most_time_game}**, commanding {most_time_hours:g} hours of your time. "
-                summary_text += f"Pace yourself for **{ironman_day}**—that will be your heaviest day with {ironman_hours:g} hours of tabletop action! "
+                
+                if max_gap_hours > 0:
+                    summary_text += f"Make sure to catch your breath during your longest break: a **{max_gap_hours:g}-hour** window starting on {gap_start_time}. "
+                    
                 summary_text += f"Your schedule officially wraps up on **{end_day}** with **{end_game}**. Good luck and roll high!"
                 
                 st.info(summary_text)
@@ -428,17 +445,15 @@ if proceed:
                     st.markdown(f"**🏃 Marathon Session:** {longest_session_game} ({longest_session_hours:g} hour block)")
                 
                 with colB:
-                    games_per_day = stats_df.groupby('Formatted Date').size()
-                    busiest_day_games = games_per_day.idxmax()
-                    busiest_day_count = games_per_day.max()
-                    st.markdown(f"**🐝 Busiest Day:** {busiest_day_games} ({busiest_day_count} sessions)")
-                    
-                    st.markdown(f"**💪 Ironman Day:** {ironman_day} ({ironman_hours:g} hours scheduled)")
-                    
                     unique_games_per_day = stats_df.groupby('Formatted Date')['Event'].nunique()
                     most_variety_day = unique_games_per_day.idxmax()
                     most_variety_count = unique_games_per_day.max()
                     st.markdown(f"**🎨 Most Variety:** {most_variety_day} ({most_variety_count} different games)")
+                    
+                    if max_gap_hours > 0:
+                        st.markdown(f"**🛏️ Biggest Time Gap:** {max_gap_hours:g} hours (Starts {gap_start_time})")
+                    else:
+                        st.markdown("**🛏️ Biggest Time Gap:** None! You are booked solid.")
 
         st.divider()
         st.markdown("### Export Your Schedule")
