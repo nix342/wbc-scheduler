@@ -6,7 +6,7 @@ import time
 st.set_page_config(page_title="WBC 2026 Custom Scheduler", layout="wide")
 
 # ---------------------------------------------------------
-# --- NEW: RICH TEXT HEADER (Change #4) ---
+# --- RICH TEXT HEADER ---
 # ---------------------------------------------------------
 st.markdown("<h1 style='text-align: center; color: #cd7f32;'>🎲 WBC 2026 Scheduler</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; font-size: 18px;'>Upload your BGG Collection to generate a personalized convention itinerary!</p>", unsafe_allow_html=True)
@@ -34,19 +34,51 @@ def clean_name(name):
 wbc['clean_name'] = wbc['Event'].apply(clean_name)
 
 # ---------------------------------------------------------
-# 2. Sidebar Configuration Controls
+# --- REORDERED SIDEBAR CONTROLS ---
 # ---------------------------------------------------------
-st.sidebar.header("1. Your Convention Details")
+
+st.sidebar.header("1. Upload Data")
+uploaded_file = st.sidebar.file_uploader("Upload your BGG Collection CSV", type=["csv"])
+
+st.sidebar.header("2. Your Convention Details")
 arrival_date = st.sidebar.date_input("Arrival Date", pd.to_datetime("2026-07-25"))
 arrival_time = st.sidebar.slider("Arrival Time (24h Clock)", 0, 23, 18)
 
 departure_date = st.sidebar.date_input("Departure Date", pd.to_datetime("2026-08-02"))
 departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, 15)
 
-# ---------------------------------------------------------
-# --- NEW: SIDEBAR EXPANDER (Change #5) ---
-# ---------------------------------------------------------
-st.sidebar.header("2. Filters & Preferences")
+unique_wbc_events = sorted(wbc['Event'].dropna().unique())
+
+st.sidebar.header("3. Priority Must-Play Games")
+selected_priorities = st.sidebar.multiselect(
+    "Select up to 3 'Must-Play' games to schedule first:",
+    options=unique_wbc_events,
+    max_selections=3
+)
+
+st.sidebar.header("4. Set Tournament Caps")
+with st.sidebar.expander("Exit Tournaments Early (Optional)"):
+    games_to_cap = st.multiselect(
+        "Select games you want to limit:",
+        options=unique_wbc_events,
+        help="Choose games where you only plan to play the first few heats or rounds."
+    )
+    game_caps = {}
+    for g in games_to_cap:
+        game_caps[g] = st.number_input(
+            f"Max Round/Heat for {g}:",
+            min_value=1, max_value=10, value=1, step=1
+        )
+        
+st.sidebar.header("5. Exclude Games")
+with st.sidebar.expander("Skip specific games (Optional)"):
+    games_to_exclude = st.multiselect(
+        "Select games to completely ignore:",
+        options=unique_wbc_events,
+        help="These games will NOT be scheduled, even if they have a high BGG rating."
+    )
+
+st.sidebar.header("6. Filters & Preferences")
 with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
     exclude_demos = st.checkbox("Exclude Demo Rounds", value=True)
     fill_gaps = st.checkbox("Fill Empty Time Slots", value=False, help="Automatically suggest other available convention games during your downtime.")
@@ -60,9 +92,10 @@ with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
         index=0
     )
 
-st.sidebar.header("3. Upload Data")
-uploaded_file = st.sidebar.file_uploader("Upload your BGG Collection CSV", type=["csv"])
 
+# ---------------------------------------------------------
+# --- LOGIC ENGINE ---
+# ---------------------------------------------------------
 if uploaded_file is None:
     status_area.info("👈 Please upload your personal boardgame collection CSV in the sidebar to populate your options!")
 else:
@@ -72,42 +105,6 @@ else:
     favs = coll[coll['rating'] >= rating_cutoff].sort_values('rating', ascending=False)
     favs['clean_name'] = favs['objectname'].apply(clean_name)
     
-    # ---------------------------------------------------------
-    # 4. Dynamic Priority & 5. Limits & 6. Exclusions
-    # ---------------------------------------------------------
-    st.sidebar.header("4. Priority Must-Play Games")
-    unique_wbc_events = sorted(wbc['Event'].dropna().unique())
-    selected_priorities = st.sidebar.multiselect(
-        "Select up to 3 'Must-Play' games to schedule first:",
-        options=unique_wbc_events,
-        max_selections=3
-    )
-    
-    st.sidebar.header("5. Set Tournament Caps")
-    with st.sidebar.expander("Exit Tournaments Early (Optional)"):
-        games_to_cap = st.multiselect(
-            "Select games you want to limit:",
-            options=unique_wbc_events,
-            help="Choose games where you only plan to play the first few heats or rounds."
-        )
-        game_caps = {}
-        for g in games_to_cap:
-            game_caps[g] = st.number_input(
-                f"Max Round/Heat for {g}:",
-                min_value=1, max_value=10, value=1, step=1
-            )
-            
-    st.sidebar.header("6. Exclude Games")
-    with st.sidebar.expander("Skip specific games (Optional)"):
-        games_to_exclude = st.multiselect(
-            "Select games to completely ignore:",
-            options=unique_wbc_events,
-            help="These games will NOT be scheduled, even if they have a high BGG rating."
-        )
-
-    # ---------------------------------------------------------
-    # --- LOGIC ENGINE ---
-    # ---------------------------------------------------------
     status_message = ""
     status_type = ""
     success_flag = False
@@ -422,9 +419,6 @@ else:
             else:
                 st.info("No events scheduled yet. Adjust your filters or constraints!")
 
-        # ---------------------------------------------------------
-        # --- NEW: CLEAN DATAFRAME RENDER (Change #2) ---
-        # ---------------------------------------------------------
         with main_tab2:
             table_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
             table_df['Time'] = table_df['Time'].apply(format_hhmm)
@@ -432,7 +426,7 @@ else:
             st.dataframe(
                 table_df, 
                 use_container_width=True,
-                hide_index=True  # Strips away the ugly 0,1,2,3 row numbers!
+                hide_index=True 
             )
             
         with main_tab3:
