@@ -81,13 +81,44 @@ rating_cutoff = 7
 # --- DYNAMIC UI RENDERING BASED ON INPUT METHOD ---
 if input_method == "Select Top 10 Games manually":
     def_top10 = [g for g in prefs.get("top10", []) if g in unique_wbc_events]
-    top10_games = st.sidebar.multiselect(
-        "Search and rank your favorite games:",
+    
+    selected_games = st.sidebar.multiselect(
+        "🔍 Search & Select Games (Max 10):",
         options=unique_wbc_events,
         default=def_top10,
-        max_selections=10,
-        help="The order matters! The first game you pick will be prioritized over the last."
+        max_selections=10
     )
+    
+    # ---------------------------------------------------------
+    # --- NEW: EDITABLE RANKING GRID ---
+    # ---------------------------------------------------------
+    # Maintain the previous order so it doesn't jump around
+    ordered_games = [g for g in def_top10 if g in selected_games]
+    ordered_games += [g for g in selected_games if g not in ordered_games]
+    
+    if len(ordered_games) > 1:
+        st.sidebar.caption("↕️ **Edit the Rank numbers below** to instantly reorder your priorities (1 = Highest Priority).")
+        rank_df = pd.DataFrame({
+            "Rank": list(range(1, len(ordered_games) + 1)),
+            "Game": ordered_games
+        })
+        
+        # Render a clean, Excel-like editable grid in the sidebar
+        edited_rank_df = st.sidebar.data_editor(
+            rank_df,
+            column_config={
+                "Rank": st.column_config.NumberColumn("Rank", min_value=1, max_value=99, step=1, width="small"),
+                "Game": st.column_config.TextColumn("Game", disabled=True)
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+        
+        # Auto-sort the list based on the numbers the user just typed!
+        top10_games = edited_rank_df.sort_values("Rank")["Game"].tolist()
+    else:
+        top10_games = ordered_games
+        
 else:
     uploaded_file = st.sidebar.file_uploader("Upload your BGG Collection CSV", type=["csv"])
     def_rate = int(prefs.get("rate", 7))
@@ -176,7 +207,7 @@ st.sidebar.divider()
 if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
     new_prefs = {
         "input_method": input_method,
-        "top10": top10_games,
+        "top10": top10_games,  # This now perfectly saves the custom order from the Grid!
         "rate": rating_cutoff,
         "arr_date": arrival_date.strftime("%Y-%m-%d"),
         "arr_time": arrival_time,
@@ -208,7 +239,6 @@ if input_method == "Select Top 10 Games manually":
     if not top10_games and not selected_priorities:
         status_area.info("👈 Please select your Top 10 or Priority games in the sidebar to generate a schedule!")
     else:
-        # Generate a fake "BGG Collection" using their Top 10 list!
         favs = pd.DataFrame({
             'objectname': top10_games,
             'rating': [10.0 - (i * 0.1) for i in range(len(top10_games))]
@@ -587,7 +617,6 @@ if proceed:
             col2.metric(label="Unique Games", value=unique_games)
             col3.metric(label="Total Hours", value=f"{total_hours:g} hrs")
             
-            # --- DYNAMIC METRIC RENDERING ---
             if input_method == "Select Top 10 Games manually":
                 if top10_games:
                     top10_played = output_df[output_df['Event'].isin(top10_games)]['Event'].nunique()
