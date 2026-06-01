@@ -53,6 +53,17 @@ def clean_name(name):
 
 wbc['clean_name'] = wbc['Event'].apply(clean_name)
 
+# --- STRICT EXCLUSION CHECKER ---
+def is_valid_round(stage_str):
+    s = str(stage_str).lower()
+    if pd.isna(stage_str) or s.strip() in ['', 'nan', 'none']: return False
+    # If it contains a number, it's valid
+    if bool(re.search(r'\d', s)): return True
+    # If it contains a tournament keyword, it's valid
+    if bool(re.search(r'quarterfinal|semifinal|final|mulligan', s)): return True
+    if 'demo' in s: return True 
+    return False
+
 # ---------------------------------------------------------
 # --- SIDEBAR CONTROLS ---
 # ---------------------------------------------------------
@@ -117,7 +128,6 @@ with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
     
     st.markdown("**Algorithm Preferences**")
     
-    # --- NEW EXCLUSION FILTERS ---
     def_demo = prefs.get("demo", True)
     exclude_demos = st.checkbox("Exclude Demo Rounds", value=def_demo)
     
@@ -157,8 +167,8 @@ if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
         "cap": games_to_cap,
         "c_caps": game_caps,
         "demo": exclude_demos,
-        "juniors": exclude_juniors,     # Saved!
-        "no_round": exclude_no_round,   # Saved!
+        "juniors": exclude_juniors,     
+        "no_round": exclude_no_round,   
         "fill": fill_gaps,
         "rate": rating_cutoff,
         "phil": options.index(schedule_philosophy)
@@ -224,7 +234,7 @@ else:
                     
                 matched = matched[matched.apply(is_within_convention_window, axis=1)]
                 
-                # --- APPLYING THE NEW FILTERS ---
+                # --- APPLYING THE NEW FILTERS STRICTLY ---
                 if exclude_demos:
                     matched = matched[~matched['Round/Heat'].astype(str).str.contains('Demo', case=False, na=False)]
                 
@@ -233,10 +243,7 @@ else:
                     matched = matched[~matched['Round/Heat'].astype(str).str.contains('Junior', case=False, na=False)]
                 
                 if exclude_no_round:
-                    # Drop games where the Round/Heat column is blank or completely missing
-                    matched = matched[matched['Round/Heat'].notna()]
-                    matched = matched[matched['Round/Heat'].astype(str).str.strip() != '']
-                    matched = matched[~matched['Round/Heat'].astype(str).str.lower().isin(['nan', 'none'])]
+                    matched = matched[matched['Round/Heat'].apply(is_valid_round)]
                 
                 if matched.empty:
                     status_message = "Your constraints (or arrival/departure times) removed all remaining games from consideration!"
@@ -386,21 +393,38 @@ else:
                             stage_str_lower = str(stage).lower()
                             game_str_lower = str(game).lower()
                             
-                            # Standard Safety Checks & New Exclusions
+                            # 1. Standard Safety Checks & New Exclusions
                             if game in games_to_exclude: continue
                             if exclude_demos and 'demo' in stage_str_lower: continue
                             if exclude_juniors and ('junior' in stage_str_lower or 'junior' in game_str_lower): continue
-                            if exclude_no_round and (pd.isna(stage) or stage_str_lower.strip() in ['', 'nan', 'none']): continue
+                            
+                            # 2. Strict No-Round Check
+                            if exclude_no_round and not is_valid_round(stage): continue
+                            
                             if not is_within_convention_window(row): continue
                             
-                            if row['Event'] in game_caps:
+                            # 3. Maintain Tournament Caps
+                            if game in game_caps:
                                 stage_num = get_round_number(stage)
-                                if (stage_num is not None and stage_num > game_caps[row['Event']]):
+                                if (stage_num is not None and stage_num > game_caps[game]):
                                     continue
                             
+                            # 4. Gap fillers should never schedule you in a Semifinal/Final out of nowhere!
                             if is_elimination(stage): continue
+                            
+                            # 5. Gap fillers should only put you in a Heat, or Round 1.
                             r_num = get_round_number(stage)
                             if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower:
+                                continue
+                                
+                            # 6. Initialize tracking for completely new unrated games
+                            if game not in scheduled_stages:
+                                scheduled_stages[game] = []
+                                scheduled_heats[game] = 0
+                                scheduled_rounds[game] = 0
+                                
+                            # 7. Apply Variety Philosophy to gap fillers!
+                            if use_variety_pass and 'heat' in stage_str_lower and scheduled_heats[game] >= 1:
                                 continue
                                 
                             if date not in booked: booked[date] = []
@@ -414,6 +438,9 @@ else:
                             if not conflict:
                                 booked[date].append((start, end, stage, -1, game))
                                 schedule.append(row.to_dict())
+                                scheduled_stages[game].append(stage)
+                                if 'heat' in stage_str_lower: scheduled_heats[game] += 1
+                                if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
 
                     if not schedule:
                         status_message = "All matching games either conflicted or hit tournament caps. No schedule could be generated."
