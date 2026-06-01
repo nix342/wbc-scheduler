@@ -33,7 +33,9 @@ def generate_itinerary(wbc, favs, selected_priorities, games_to_exclude, games_t
         return False, "warning", "No matching games found between your selections and the WBC schedule.", output_df
 
     matched = pd.DataFrame(matches)
-    
+    # Add this one line to bulletproof the datetime conversion!
+    matched['Date_parsed'] = pd.to_datetime(matched['Date_parsed'])
+
     # --- TIME & EXCLUSION FILTERING ---
     arrival_dt = pd.to_datetime(arrival_date)
     departure_dt = pd.to_datetime(departure_date)
