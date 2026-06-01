@@ -40,6 +40,10 @@ departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, 15)
 
 st.sidebar.header("2. Filters & Preferences")
 exclude_demos = st.sidebar.checkbox("Exclude Demo Rounds", value=True)
+
+# --- NEW: GAP FILLER TOGGLE ---
+fill_gaps = st.sidebar.checkbox("Fill Empty Time Slots", value=False, help="Automatically suggest other available convention games during your downtime.")
+
 rating_cutoff = st.sidebar.slider("Minimum BGG Rating to consider", 1, 10, 7)
 
 schedule_philosophy = st.sidebar.radio(
@@ -186,6 +190,7 @@ else:
 
                     use_variety_pass = "Maximize Variety" in schedule_philosophy
                     
+                    # --- PASS 1: Priority & Playoff ---
                     for _, row in matched.iterrows():
                         date = row['Date']
                         start = row['Time']
@@ -232,14 +237,15 @@ else:
                                     
                         if not conflict:
                             booked[date].append((start, end, stage, tier, game))
-                            schedule.append(row)
+                            schedule.append(row.to_dict())
                             scheduled_stages[game].append(stage)
                             if 'heat' in stage_str_lower: scheduled_heats[game] += 1
                             if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
 
+                    # --- PASS 2: Variety Filler ---
                     if use_variety_pass:
                         for _, row in matched.iterrows():
-                            if any(r.name == row.name for r in schedule): continue
+                            if any(r['Event'] == row['Event'] and r['Round/Heat'] == row['Round/Heat'] for r in schedule): continue
                             
                             date = row['Date']
                             start = row['Time']
@@ -277,10 +283,53 @@ else:
                                         
                             if not conflict:
                                 booked[date].append((start, end, stage, tier, game))
-                                schedule.append(row)
+                                schedule.append(row.to_dict())
                                 scheduled_stages[game].append(stage)
                                 if 'heat' in stage_str_lower: scheduled_heats[game] += 1
                                 if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
+
+                    # --- PASS 3: GAP FILLERS (NEW) ---
+                    if fill_gaps:
+                        # Sort the master schedule chronologically so we fill gaps left-to-right
+                        wbc_filler = wbc.sort_values(['Date_parsed', 'Time'])
+                        for _, row in wbc_filler.iterrows():
+                            date = row['Date']
+                            start = row['Time']
+                            end = start + row['Duration']
+                            game = row['Event']
+                            stage = row['Round/Heat']
+                            stage_str_lower = str(stage).lower()
+                            
+                            # Standard safety filters
+                            if game in games_to_exclude: continue
+                            if exclude_demos and 'demo' in stage_str_lower: continue
+                            if not is_within_convention_window(row): continue
+                            
+                            # Keep caps consistent
+                            if row['Event'] in game_caps:
+                                stage_num = get_round_number(stage)
+                                if (stage_num is not None and stage_num > game_caps[row['Event']]):
+                                    continue
+                            
+                            # Only fill gaps with entry-level rounds/heats (No finals for games you haven't played!)
+                            if is_elimination(stage): continue
+                            r_num = get_round_number(stage)
+                            if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower:
+                                continue
+                                
+                            if date not in booked: booked[date] = []
+                            
+                            # Conflict Check
+                            conflict = False
+                            for b_start, b_end, b_stage, b_tier, b_game in booked[date]:
+                                if max(start, b_start) < min(end, b_end):
+                                    conflict = True
+                                    break
+                                    
+                            if not conflict:
+                                booked[date].append((start, end, stage, -1, game))
+                                schedule.append(row.to_dict())
+
 
                     if not schedule:
                         status_message = "All matching games either conflicted or hit tournament caps. No schedule could be generated."
@@ -302,7 +351,6 @@ else:
 
         st.subheader("Your Personalized Itinerary")
         
-        # --- NEW: Added a 3rd Tab for Metrics! ---
         main_tab1, main_tab2, main_tab3 = st.tabs(["📊 Visual Schedule", "📋 Tabular Data", "📈 Custom Metrics"])
         
         def format_hhmm(t):
@@ -370,27 +418,25 @@ else:
             table_df['Time'] = table_df['Time'].apply(format_hhmm)
             st.dataframe(table_df, use_container_width=True)
             
-        # ----------------------------------------------------
-        # --- NEW: METRICS DASHBOARD TAB ---
-        # ----------------------------------------------------
         with main_tab3:
             st.markdown("### Convention Stats")
             
-            # 1. Calculate the numbers
             total_events = len(output_df)
             unique_games = output_df['Event'].nunique()
             total_hours = output_df['Duration'].sum()
-            avg_rating = output_df['rating'].mean()
+            
+            # Use 'rating' column if it exists, otherwise skip it gracefully (gap fillers won't have it)
+            if 'rating' in output_df.columns:
+                avg_rating = output_df['rating'].mean()
+            else:
+                avg_rating = None
 
-            # 2. Layout 4 columns side-by-side
             col1, col2, col3, col4 = st.columns(4)
             
-            # 3. Paint the massive metric numbers
             col1.metric(label="Total Sessions", value=total_events)
             col2.metric(label="Unique Games", value=unique_games)
             col3.metric(label="Total Hours", value=f"{total_hours:g} hrs")
             
-            # Clean up the rating so it doesn't show 5 decimal places
             if pd.notna(avg_rating):
                 col4.metric(label="Avg BGG Rating", value=f"{avg_rating:.1f}")
             else:
@@ -398,13 +444,12 @@ else:
                 
             st.divider()
             
-            # A fun extra insight: What game are you playing the most?
             if not output_df.empty:
                 most_played = output_df['Event'].value_counts().idxmax()
                 most_played_count = output_df['Event'].value_counts().max()
                 st.markdown(f"**🏅 Most Played Game:** {most_played} ({most_played_count} scheduled sessions)")
 
-        # --- CSV EXPORT (Kept below everything) ---
+        # --- CSV EXPORT ---
         csv_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
         csv_df['Time'] = csv_df['Time'].apply(format_hhmm)
         csv = csv_df.to_csv(index=False).encode('utf-8')
