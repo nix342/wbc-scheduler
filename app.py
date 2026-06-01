@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import re
 import time
+import json
+from streamlit_javascript import st_javascript
 
 st.set_page_config(page_title="WBC 2026 Custom Scheduler", layout="wide")
 
@@ -11,6 +13,27 @@ st.set_page_config(page_title="WBC 2026 Custom Scheduler", layout="wide")
 st.markdown("<h1 style='text-align: center; color: #cd7f32;'>🎲 WBC 2026 Scheduler</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; font-size: 18px;'>Upload your BGG Collection to generate a personalized convention itinerary!</p>", unsafe_allow_html=True)
 st.divider()
+
+# ---------------------------------------------------------
+# --- BROWSER LOCAL STORAGE BOOTSTRAP ---
+# ---------------------------------------------------------
+# We use st_javascript to ask the browser for saved preferences. 
+# It returns 0 on the very first frame while it evaluates.
+ls_result = st_javascript("localStorage.getItem('wbc_prefs') || 'NONE';")
+
+if "prefs" not in st.session_state:
+    if ls_result == 0:
+        st.stop()  # Pause for a split-second to let the browser return the data
+    elif ls_result == "NONE":
+        st.session_state.prefs = {}
+    else:
+        try:
+            st.session_state.prefs = json.loads(ls_result)
+        except:
+            st.session_state.prefs = {}
+
+# Store them cleanly in a variable to use for all our UI defaults!
+prefs = st.session_state.prefs
 
 # ---------------------------------------------------------
 # --- THE MASTER UI SLOT ---
@@ -41,62 +64,101 @@ st.sidebar.header("1. Upload Data")
 uploaded_file = st.sidebar.file_uploader("Upload your BGG Collection CSV", type=["csv"])
 
 st.sidebar.header("2. Your Convention Details")
-arrival_date = st.sidebar.date_input("Arrival Date", pd.to_datetime("2026-07-25"))
-arrival_time = st.sidebar.slider("Arrival Time (24h Clock)", 0, 23, 18)
+def_arr_date = pd.to_datetime(prefs.get("arr_date", "2026-07-25"))
+arrival_date = st.sidebar.date_input("Arrival Date", def_arr_date)
 
-departure_date = st.sidebar.date_input("Departure Date", pd.to_datetime("2026-08-02"))
-departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, 15)
+def_arr_time = int(prefs.get("arr_time", 18))
+arrival_time = st.sidebar.slider("Arrival Time (24h Clock)", 0, 23, def_arr_time)
+
+def_dep_date = pd.to_datetime(prefs.get("dep_date", "2026-08-02"))
+departure_date = st.sidebar.date_input("Departure Date", def_dep_date)
+
+def_dep_time = int(prefs.get("dep_time", 15))
+departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, def_dep_time)
 
 unique_wbc_events = sorted(wbc['Event'].dropna().unique())
 
 st.sidebar.header("3. Priority Must-Play Games")
+def_pri = [g for g in prefs.get("pri", []) if g in unique_wbc_events]
 selected_priorities = st.sidebar.multiselect(
     "Select up to 3 'Must-Play' games to schedule first:",
     options=unique_wbc_events,
+    default=def_pri,
     max_selections=3
 )
 
-# ---------------------------------------------------------
-# --- CONSOLIDATED ADVANCED FILTERS ---
-# ---------------------------------------------------------
 st.sidebar.header("4. Filters & Preferences")
 with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
     
     st.markdown("**Tournament Limits & Exclusions**")
+    def_excl = [g for g in prefs.get("excl", []) if g in unique_wbc_events]
     games_to_exclude = st.multiselect(
         "Skip specific games:",
         options=unique_wbc_events,
+        default=def_excl,
         help="These games will NOT be scheduled, even if they have a high BGG rating."
     )
     
+    def_cap = [g for g in prefs.get("cap", []) if g in unique_wbc_events]
     games_to_cap = st.multiselect(
         "Limit tournament runs for:",
         options=unique_wbc_events,
+        default=def_cap,
         help="Choose games where you only plan to play the first few heats or rounds."
     )
     
     game_caps = {}
+    saved_caps = prefs.get("c_caps", {})
     for g in games_to_cap:
+        def_cap_val = int(saved_caps.get(g, 1))
         game_caps[g] = st.number_input(
             f"Max Round/Heat for {g}:",
-            min_value=1, max_value=10, value=1, step=1
+            min_value=1, max_value=10, value=def_cap_val, step=1
         )
         
     st.divider()
     
     st.markdown("**Algorithm Preferences**")
-    exclude_demos = st.checkbox("Exclude Demo Rounds", value=True)
-    fill_gaps = st.checkbox("Fill Empty Time Slots", value=False, help="Automatically suggest other available convention games during your downtime.")
-    rating_cutoff = st.slider("Minimum BGG Rating to consider", 1, 10, 7)
+    def_demo = prefs.get("demo", True)
+    exclude_demos = st.checkbox("Exclude Demo Rounds", value=def_demo)
+    
+    def_fill = prefs.get("fill", False)
+    fill_gaps = st.checkbox("Fill Empty Time Slots", value=def_fill, help="Automatically suggest other available convention games during your downtime.")
+    
+    def_rate = int(prefs.get("rate", 7))
+    rating_cutoff = st.slider("Minimum BGG Rating to consider", 1, 10, def_rate)
+    
+    options = [
+        "Maximize Playoff Chances (Prioritize repeat heats)", 
+        "Maximize Variety (Prioritize single heats of many games)"
+    ]
+    def_phil = int(prefs.get("phil", 0))
     schedule_philosophy = st.radio(
         "Scheduling Strategy Preference",
-        options=[
-            "Maximize Playoff Chances (Prioritize repeat heats)", 
-            "Maximize Variety (Prioritize single heats of many games)"
-        ],
-        index=0
+        options=options,
+        index=def_phil
     )
 
+# --- LOCAL STORAGE SAVING ---
+st.sidebar.divider()
+if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
+    new_prefs = {
+        "arr_date": arrival_date.strftime("%Y-%m-%d"),
+        "arr_time": arrival_time,
+        "dep_date": departure_date.strftime("%Y-%m-%d"),
+        "dep_time": departure_time,
+        "pri": selected_priorities,
+        "excl": games_to_exclude,
+        "cap": games_to_cap,
+        "c_caps": game_caps,
+        "demo": exclude_demos,
+        "fill": fill_gaps,
+        "rate": rating_cutoff,
+        "phil": options.index(schedule_philosophy)
+    }
+    js_code = f"localStorage.setItem('wbc_prefs', JSON.stringify({json.dumps(new_prefs)}));"
+    st_javascript(js_code)
+    st.sidebar.success("Saved! Your settings will auto-load next time.")
 
 # ---------------------------------------------------------
 # --- LOGIC ENGINE ---
