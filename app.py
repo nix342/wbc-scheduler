@@ -34,7 +34,7 @@ def clean_name(name):
 wbc['clean_name'] = wbc['Event'].apply(clean_name)
 
 # ---------------------------------------------------------
-# --- REORDERED SIDEBAR CONTROLS ---
+# --- SIDEBAR CONTROLS ---
 # ---------------------------------------------------------
 
 st.sidebar.header("1. Upload Data")
@@ -56,13 +56,25 @@ selected_priorities = st.sidebar.multiselect(
     max_selections=3
 )
 
-st.sidebar.header("4. Set Tournament Caps")
-with st.sidebar.expander("Exit Tournaments Early (Optional)"):
+# ---------------------------------------------------------
+# --- CONSOLIDATED ADVANCED FILTERS ---
+# ---------------------------------------------------------
+st.sidebar.header("4. Filters & Preferences")
+with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
+    
+    st.markdown("**Tournament Limits & Exclusions**")
+    games_to_exclude = st.multiselect(
+        "Skip specific games:",
+        options=unique_wbc_events,
+        help="These games will NOT be scheduled, even if they have a high BGG rating."
+    )
+    
     games_to_cap = st.multiselect(
-        "Select games you want to limit:",
+        "Limit tournament runs for:",
         options=unique_wbc_events,
         help="Choose games where you only plan to play the first few heats or rounds."
     )
+    
     game_caps = {}
     for g in games_to_cap:
         game_caps[g] = st.number_input(
@@ -70,16 +82,9 @@ with st.sidebar.expander("Exit Tournaments Early (Optional)"):
             min_value=1, max_value=10, value=1, step=1
         )
         
-st.sidebar.header("5. Exclude Games")
-with st.sidebar.expander("Skip specific games (Optional)"):
-    games_to_exclude = st.multiselect(
-        "Select games to completely ignore:",
-        options=unique_wbc_events,
-        help="These games will NOT be scheduled, even if they have a high BGG rating."
-    )
-
-st.sidebar.header("6. Filters & Preferences")
-with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
+    st.divider()
+    
+    st.markdown("**Algorithm Preferences**")
     exclude_demos = st.checkbox("Exclude Demo Rounds", value=True)
     fill_gaps = st.checkbox("Fill Empty Time Slots", value=False, help="Automatically suggest other available convention games during your downtime.")
     rating_cutoff = st.slider("Minimum BGG Rating to consider", 1, 10, 7)
