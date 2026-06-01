@@ -70,7 +70,6 @@ def is_valid_round(stage_str):
 st.sidebar.header("1. Choose Input Method")
 def_method = prefs.get("input_method", "Upload BGG Collection CSV")
 
-# --- Swapped the default to BGG CSV First ---
 input_method = st.sidebar.radio(
     "How do you want to build your list?",
     options=["Upload BGG Collection CSV", "Select Top 10 Games manually"],
@@ -124,7 +123,8 @@ st.sidebar.header("2. Your Convention Details")
 def_arr_date = pd.to_datetime(prefs.get("arr_date", "2026-07-25"))
 arrival_date = st.sidebar.date_input("Arrival Date", def_arr_date)
 
-def_arr_time = int(prefs.get("arr_time", 18))
+# --- CHANGED: Default arrival time is now 9 (9:00 AM) ---
+def_arr_time = int(prefs.get("arr_time", 9))
 arrival_time = st.sidebar.slider("Arrival Time (24h Clock)", 0, 23, def_arr_time)
 
 def_dep_date = pd.to_datetime(prefs.get("dep_date", "2026-08-02"))
@@ -133,12 +133,8 @@ departure_date = st.sidebar.date_input("Departure Date", def_dep_date)
 def_dep_time = int(prefs.get("dep_time", 15))
 departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, def_dep_time)
 
-# ---------------------------------------------------------
-# --- NEW: AUTO-DEFAULT PRIORITIES FOR TOP 10 LIST ---
-# ---------------------------------------------------------
 st.sidebar.header("3. Priority Must-Play Games")
 
-# If they use the Top 10 method and haven't explicitly saved a priority list, automatically grab their top 3!
 if input_method == "Select Top 10 Games manually" and not prefs.get("pri_saved_flag", False):
     def_pri = top10_games[:3]
 else:
@@ -222,7 +218,7 @@ if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
         "dep_date": departure_date.strftime("%Y-%m-%d"),
         "dep_time": departure_time,
         "pri": selected_priorities,
-        "pri_saved_flag": True,  # Sets a flag so the auto-sync to Top 10 stops overriding
+        "pri_saved_flag": True,
         "excl": games_to_exclude,
         "cap": games_to_cap,
         "c_caps": game_caps,
@@ -236,9 +232,7 @@ if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
     st_javascript(js_code)
     st.sidebar.success("Saved! Your settings will auto-load next time.")
 
-# --- NEW: HARD RESET BUTTON ---
 if st.sidebar.button("🗑️ Clear Form & Reset Defaults", use_container_width=True):
-    # Wipes local storage and forces the browser to physically reload the page!
     components.html("<script>localStorage.removeItem('wbc_prefs'); window.parent.location.reload();</script>", height=0)
     st.stop()
 
