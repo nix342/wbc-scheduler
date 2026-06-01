@@ -41,7 +41,7 @@ departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, 15)
 st.sidebar.header("2. Filters & Preferences")
 exclude_demos = st.sidebar.checkbox("Exclude Demo Rounds", value=True)
 
-# --- NEW: GAP FILLER TOGGLE ---
+# --- GAP FILLER TOGGLE ---
 fill_gaps = st.sidebar.checkbox("Fill Empty Time Slots", value=False, help="Automatically suggest other available convention games during your downtime.")
 
 rating_cutoff = st.sidebar.slider("Minimum BGG Rating to consider", 1, 10, 7)
@@ -288,9 +288,8 @@ else:
                                 if 'heat' in stage_str_lower: scheduled_heats[game] += 1
                                 if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
 
-                    # --- PASS 3: GAP FILLERS (NEW) ---
+                    # --- PASS 3: GAP FILLERS ---
                     if fill_gaps:
-                        # Sort the master schedule chronologically so we fill gaps left-to-right
                         wbc_filler = wbc.sort_values(['Date_parsed', 'Time'])
                         for _, row in wbc_filler.iterrows():
                             date = row['Date']
@@ -300,18 +299,15 @@ else:
                             stage = row['Round/Heat']
                             stage_str_lower = str(stage).lower()
                             
-                            # Standard safety filters
                             if game in games_to_exclude: continue
                             if exclude_demos and 'demo' in stage_str_lower: continue
                             if not is_within_convention_window(row): continue
                             
-                            # Keep caps consistent
                             if row['Event'] in game_caps:
                                 stage_num = get_round_number(stage)
                                 if (stage_num is not None and stage_num > game_caps[row['Event']]):
                                     continue
                             
-                            # Only fill gaps with entry-level rounds/heats (No finals for games you haven't played!)
                             if is_elimination(stage): continue
                             r_num = get_round_number(stage)
                             if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower:
@@ -319,7 +315,6 @@ else:
                                 
                             if date not in booked: booked[date] = []
                             
-                            # Conflict Check
                             conflict = False
                             for b_start, b_end, b_stage, b_tier, b_game in booked[date]:
                                 if max(start, b_start) < min(end, b_end):
@@ -329,7 +324,6 @@ else:
                             if not conflict:
                                 booked[date].append((start, end, stage, -1, game))
                                 schedule.append(row.to_dict())
-
 
                     if not schedule:
                         status_message = "All matching games either conflicted or hit tournament caps. No schedule could be generated."
@@ -361,6 +355,11 @@ else:
 
         with main_tab1:
             viz_df = output_df.copy()
+            
+            # --- NEW: Check if the event is a playoff round ---
+            viz_df['Is_Elimination'] = viz_df['Round/Heat'].apply(
+                lambda x: bool(re.search(r'quarterfinal|semifinal|final', str(x), re.IGNORECASE))
+            )
             
             viz_df['Logical Date'] = viz_df.apply(
                 lambda row: row['Date_parsed'] - pd.Timedelta(days=1) if row['Time'] < 8 else row['Date_parsed'], 
@@ -395,9 +394,13 @@ else:
                         x_scale = alt.Scale(domain=[8, 26], clamp=True)
                         label_expr = "datum.value >= 24 ? (datum.value - 24 < 10 ? '0' + (datum.value - 24) : (datum.value - 24)) + '00' : (datum.value < 10 ? '0' + datum.value : datum.value) + '00'"
                         
+                        # --- NEW: Added conditional strokes to highlight elimination rounds! ---
                         bottom_axis_chart = base_chart.mark_bar(cornerRadius=4, height=20).encode(
                             x=alt.X('Plot Time', title='Time (HHMM)', scale=x_scale, 
-                                    axis=alt.Axis(orient='bottom', tickCount=18, labelExpr=label_expr))
+                                    axis=alt.Axis(orient='bottom', tickCount=18, labelExpr=label_expr)),
+                            stroke=alt.condition(alt.datum.Is_Elimination, alt.value('gold'), alt.value('transparent')),
+                            strokeDash=alt.condition(alt.datum.Is_Elimination, alt.value([5, 5]), alt.value([0])),
+                            strokeWidth=alt.condition(alt.datum.Is_Elimination, alt.value(3), alt.value(0))
                         )
 
                         top_axis_chart = base_chart.mark_bar(opacity=0).encode(
@@ -425,7 +428,6 @@ else:
             unique_games = output_df['Event'].nunique()
             total_hours = output_df['Duration'].sum()
             
-            # Use 'rating' column if it exists, otherwise skip it gracefully (gap fillers won't have it)
             if 'rating' in output_df.columns:
                 avg_rating = output_df['rating'].mean()
             else:
