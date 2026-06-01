@@ -4,6 +4,7 @@ import re
 import time
 import json
 from streamlit_javascript import st_javascript
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="WBC 2026 Custom Scheduler", layout="wide")
 
@@ -11,7 +12,7 @@ st.set_page_config(page_title="WBC 2026 Custom Scheduler", layout="wide")
 # --- RICH TEXT HEADER ---
 # ---------------------------------------------------------
 st.markdown("<h1 style='text-align: center; color: #cd7f32;'>🎲 WBC 2026 Scheduler</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; font-size: 18px;'>Select your Top 10 games or upload your BGG Collection to generate a personalized itinerary!</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-size: 18px;'>Upload your BGG Collection or select your Top 10 games to generate a personalized itinerary!</p>", unsafe_allow_html=True)
 st.divider()
 
 # ---------------------------------------------------------
@@ -67,18 +68,19 @@ def is_valid_round(stage_str):
 # ---------------------------------------------------------
 
 st.sidebar.header("1. Choose Input Method")
-def_method = prefs.get("input_method", "Select Top 10 Games manually")
+def_method = prefs.get("input_method", "Upload BGG Collection CSV")
+
+# --- Swapped the default to BGG CSV First ---
 input_method = st.sidebar.radio(
     "How do you want to build your list?",
-    options=["Select Top 10 Games manually", "Upload BGG Collection CSV"],
-    index=0 if def_method == "Select Top 10 Games manually" else 1
+    options=["Upload BGG Collection CSV", "Select Top 10 Games manually"],
+    index=0 if def_method == "Upload BGG Collection CSV" else 1
 )
 
 top10_games = []
 uploaded_file = None
 rating_cutoff = 7
 
-# --- DYNAMIC UI RENDERING BASED ON INPUT METHOD ---
 if input_method == "Select Top 10 Games manually":
     def_top10 = [g for g in prefs.get("top10", []) if g in unique_wbc_events]
     
@@ -89,10 +91,6 @@ if input_method == "Select Top 10 Games manually":
         max_selections=10
     )
     
-    # ---------------------------------------------------------
-    # --- NEW: EDITABLE RANKING GRID ---
-    # ---------------------------------------------------------
-    # Maintain the previous order so it doesn't jump around
     ordered_games = [g for g in def_top10 if g in selected_games]
     ordered_games += [g for g in selected_games if g not in ordered_games]
     
@@ -103,7 +101,6 @@ if input_method == "Select Top 10 Games manually":
             "Game": ordered_games
         })
         
-        # Render a clean, Excel-like editable grid in the sidebar
         edited_rank_df = st.sidebar.data_editor(
             rank_df,
             column_config={
@@ -114,7 +111,6 @@ if input_method == "Select Top 10 Games manually":
             use_container_width=True
         )
         
-        # Auto-sort the list based on the numbers the user just typed!
         top10_games = edited_rank_df.sort_values("Rank")["Game"].tolist()
     else:
         top10_games = ordered_games
@@ -137,8 +133,17 @@ departure_date = st.sidebar.date_input("Departure Date", def_dep_date)
 def_dep_time = int(prefs.get("dep_time", 15))
 departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, def_dep_time)
 
+# ---------------------------------------------------------
+# --- NEW: AUTO-DEFAULT PRIORITIES FOR TOP 10 LIST ---
+# ---------------------------------------------------------
 st.sidebar.header("3. Priority Must-Play Games")
-def_pri = [g for g in prefs.get("pri", []) if g in unique_wbc_events]
+
+# If they use the Top 10 method and haven't explicitly saved a priority list, automatically grab their top 3!
+if input_method == "Select Top 10 Games manually" and not prefs.get("pri_saved_flag", False):
+    def_pri = top10_games[:3]
+else:
+    def_pri = [g for g in prefs.get("pri", []) if g in unique_wbc_events]
+    
 selected_priorities = st.sidebar.multiselect(
     "Select up to 3 'Must-Play' games to schedule first:",
     options=unique_wbc_events,
@@ -202,18 +207,22 @@ with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
         index=def_phil
     )
 
-# --- LOCAL STORAGE SAVING ---
+# ---------------------------------------------------------
+# --- BROWSER STORAGE BUTTONS ---
+# ---------------------------------------------------------
 st.sidebar.divider()
+
 if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
     new_prefs = {
         "input_method": input_method,
-        "top10": top10_games,  # This now perfectly saves the custom order from the Grid!
+        "top10": top10_games,
         "rate": rating_cutoff,
         "arr_date": arrival_date.strftime("%Y-%m-%d"),
         "arr_time": arrival_time,
         "dep_date": departure_date.strftime("%Y-%m-%d"),
         "dep_time": departure_time,
         "pri": selected_priorities,
+        "pri_saved_flag": True,  # Sets a flag so the auto-sync to Top 10 stops overriding
         "excl": games_to_exclude,
         "cap": games_to_cap,
         "c_caps": game_caps,
@@ -227,10 +236,16 @@ if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
     st_javascript(js_code)
     st.sidebar.success("Saved! Your settings will auto-load next time.")
 
+# --- NEW: HARD RESET BUTTON ---
+if st.sidebar.button("🗑️ Clear Form & Reset Defaults", use_container_width=True):
+    # Wipes local storage and forces the browser to physically reload the page!
+    components.html("<script>localStorage.removeItem('wbc_prefs'); window.parent.location.reload();</script>", height=0)
+    st.stop()
+
+
 # ---------------------------------------------------------
 # --- LOGIC ENGINE ---
 # ---------------------------------------------------------
-
 proceed = False
 favs = pd.DataFrame()
 
