@@ -4,8 +4,13 @@ import re
 import time
 
 st.set_page_config(page_title="WBC 2026 Custom Scheduler", layout="wide")
-st.title("WBC 2026 Conflict-Free Tournament Scheduler")
-st.write("Upload your BoardGameGeek collection CSV to generate a personalized, priority-driven itinerary!")
+
+# ---------------------------------------------------------
+# --- NEW: RICH TEXT HEADER (Change #4) ---
+# ---------------------------------------------------------
+st.markdown("<h1 style='text-align: center; color: #cd7f32;'>🎲 WBC 2026 Scheduler</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-size: 18px;'>Upload your BGG Collection to generate a personalized convention itinerary!</p>", unsafe_allow_html=True)
+st.divider()
 
 # ---------------------------------------------------------
 # --- THE MASTER UI SLOT ---
@@ -38,22 +43,22 @@ arrival_time = st.sidebar.slider("Arrival Time (24h Clock)", 0, 23, 18)
 departure_date = st.sidebar.date_input("Departure Date", pd.to_datetime("2026-08-02"))
 departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, 15)
 
+# ---------------------------------------------------------
+# --- NEW: SIDEBAR EXPANDER (Change #5) ---
+# ---------------------------------------------------------
 st.sidebar.header("2. Filters & Preferences")
-exclude_demos = st.sidebar.checkbox("Exclude Demo Rounds", value=True)
-
-fill_gaps = st.sidebar.checkbox("Fill Empty Time Slots", value=False, help="Automatically suggest other available convention games during your downtime.")
-
-rating_cutoff = st.sidebar.slider("Minimum BGG Rating to consider", 1, 10, 7)
-
-schedule_philosophy = st.sidebar.radio(
-    "Scheduling Strategy Preference",
-    options=[
-        "Maximize Playoff Chances (Prioritize multiple heats of the same games)", 
-        "Maximize Variety (Prioritize single heats of many different games)"
-    ],
-    index=0,
-    help="Playoff mode fills your schedule with repeat heats to unlock finals. Variety mode spreads your time across as many unique titles as possible."
-)
+with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
+    exclude_demos = st.checkbox("Exclude Demo Rounds", value=True)
+    fill_gaps = st.checkbox("Fill Empty Time Slots", value=False, help="Automatically suggest other available convention games during your downtime.")
+    rating_cutoff = st.slider("Minimum BGG Rating to consider", 1, 10, 7)
+    schedule_philosophy = st.radio(
+        "Scheduling Strategy Preference",
+        options=[
+            "Maximize Playoff Chances (Prioritize repeat heats)", 
+            "Maximize Variety (Prioritize single heats of many games)"
+        ],
+        index=0
+    )
 
 st.sidebar.header("3. Upload Data")
 uploaded_file = st.sidebar.file_uploader("Upload your BGG Collection CSV", type=["csv"])
@@ -417,10 +422,18 @@ else:
             else:
                 st.info("No events scheduled yet. Adjust your filters or constraints!")
 
+        # ---------------------------------------------------------
+        # --- NEW: CLEAN DATAFRAME RENDER (Change #2) ---
+        # ---------------------------------------------------------
         with main_tab2:
             table_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
             table_df['Time'] = table_df['Time'].apply(format_hhmm)
-            st.dataframe(table_df, use_container_width=True)
+            
+            st.dataframe(
+                table_df, 
+                use_container_width=True,
+                hide_index=True  # Strips away the ugly 0,1,2,3 row numbers!
+            )
             
         with main_tab3:
             st.markdown("### Convention Stats")
@@ -452,22 +465,16 @@ else:
                 most_played_count = output_df['Event'].value_counts().max()
                 st.markdown(f"**🏅 Most Played Game:** {most_played} ({most_played_count} scheduled sessions)")
 
-        # ----------------------------------------------------
-        # --- NEW: SCHEDULE EXPORT AREA ---
-        # ----------------------------------------------------
         st.divider()
         st.markdown("### Export Your Schedule")
         
-        # 1. Standard Formatting for Regular CSV
         csv_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
         csv_df['Time'] = csv_df['Time'].apply(format_hhmm)
         standard_csv = csv_df.to_csv(index=False).encode('utf-8')
         
-        # 2. Advanced Formatting for Google Calendar CSV
         gcal_df = pd.DataFrame()
         gcal_df['Subject'] = output_df['Event'] + " (" + output_df['Round/Heat'].astype(str) + ")"
         
-        # We need true Datetime objects for Google to understand the hours
         start_dts = output_df['Date_parsed'] + pd.to_timedelta(output_df['Time'], unit='h')
         end_dts = output_df['Date_parsed'] + pd.to_timedelta(output_df['Time'] + output_df['Duration'], unit='h')
         
@@ -477,13 +484,11 @@ else:
         gcal_df['End Time'] = end_dts.dt.strftime('%I:%M %p')
         gcal_df['All Day Event'] = 'False'
         
-        # Safely handle missing GMs and Locations
         gcal_df['Description'] = 'GM: ' + output_df.get('GM', 'TBD').fillna('TBD').astype(str)
         gcal_df['Location'] = output_df.get('Location', 'TBD').fillna('TBD').astype(str)
         
         gcal_csv = gcal_df.to_csv(index=False).encode('utf-8')
         
-        # Display side-by-side buttons
         colA, colB = st.columns(2)
         with colA:
             st.download_button(
