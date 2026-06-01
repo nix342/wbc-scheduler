@@ -1,10 +1,13 @@
 import streamlit as st
 import pandas as pd
-import re
-import time
 import json
+import altair as alt
 from streamlit_javascript import st_javascript
 import streamlit.components.v1 as components
+
+# --- NEW: Import our separated logic! ---
+from utils import load_wbc_schedule, clean_name, format_hhmm, get_border_color
+from engine import generate_itinerary
 
 st.set_page_config(page_title="WBC 2026 Custom Scheduler", layout="wide")
 
@@ -33,35 +36,12 @@ if "prefs" not in st.session_state:
 
 prefs = st.session_state.prefs
 
-# ---------------------------------------------------------
-# --- THE MASTER UI SLOT ---
-# ---------------------------------------------------------
 status_area = st.empty()
 
-# 1. Load the master schedule
-@st.cache_data
-def load_wbc_schedule():
-    df = pd.read_csv('wbc2026.csv', skiprows=5)
-    df['Time'] = pd.to_numeric(df['Time'], errors='coerce')
-    df['Duration'] = pd.to_numeric(df['Duration'], errors='coerce')
-    df['Date_parsed'] = pd.to_datetime(df['Date'], format='%m/%d/%y', errors='coerce')
-    return df.dropna(subset=['Time', 'Duration', 'Date_parsed'])
-
+# Load global data using util functions
 wbc = load_wbc_schedule()
 unique_wbc_events = sorted(wbc['Event'].dropna().unique())
-
-def clean_name(name):
-    return re.sub(r'[^a-z0-9]', '', str(name).lower()) if pd.notna(name) else ""
-
 wbc['clean_name'] = wbc['Event'].apply(clean_name)
-
-def is_valid_round(stage_str):
-    s = str(stage_str).lower()
-    if pd.isna(stage_str) or s.strip() in ['', 'nan', 'none']: return False
-    if bool(re.search(r'\d', s)): return True
-    if bool(re.search(r'quarterfinal|semifinal|final|mulligan', s)): return True
-    if 'demo' in s: return True 
-    return False
 
 # ---------------------------------------------------------
 # --- SIDEBAR CONTROLS ---
@@ -109,7 +89,6 @@ if input_method == "Select Top 10 Games manually":
             hide_index=True,
             use_container_width=True
         )
-        
         top10_games = edited_rank_df.sort_values("Rank")["Game"].tolist()
     else:
         top10_games = ordered_games
@@ -131,7 +110,6 @@ departure_date = st.sidebar.date_input("Departure Date", def_dep_date)
 
 def_dep_time = int(prefs.get("dep_time", 15))
 departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, def_dep_time)
-
 
 st.sidebar.header("3. Priority Must-Play Games")
 
@@ -203,9 +181,6 @@ with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
         index=def_phil
     )
 
-# ---------------------------------------------------------
-# --- BROWSER STORAGE BUTTONS ---
-# ---------------------------------------------------------
 st.sidebar.divider()
 
 if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
@@ -238,12 +213,11 @@ if st.sidebar.button("🗑️ Clear Form & Reset Defaults", use_container_width=
 
 
 # ---------------------------------------------------------
-# --- LOGIC ENGINE ---
+# --- TRIGGER LOGIC ENGINE ---
 # ---------------------------------------------------------
 proceed = False
 favs = pd.DataFrame()
 
-# Validate inputs based on chosen method
 if input_method == "Select Top 10 Games manually":
     if not top10_games and not selected_priorities:
         status_area.info("👈 Please select your Top 10 or Priority games in the sidebar to generate a schedule!")
@@ -268,256 +242,16 @@ else:
         proceed = True
 
 if proceed:
-    status_message = ""
-    status_type = ""
-    success_flag = False
-
     with status_area.container():
         with st.spinner('Crunching the convention matrix! Building your conflict-free itinerary...'):
             
-            matches = []
-            for _, w_row in wbc.iterrows():
-                if w_row['Event'] in games_to_exclude:
-                    continue
-                    
-                is_priority = w_row['Event'] in selected_priorities
-                matched_fav = False
-                
-                for _, f_row in favs.iterrows():
-                    if w_row['clean_name'] == f_row['clean_name'] or (len(w_row['clean_name']) > 5 and w_row['clean_name'] in f_row['clean_name']):
-                        matches.append({**w_row.to_dict(), **f_row.to_dict()})
-                        matched_fav = True
-                        break
-                        
-                if not matched_fav and is_priority:
-                    priority_match = w_row.to_dict()
-                    priority_match['rating'] = 10.0
-                    matches.append(priority_match)
-                    
-            if not matches:
-                status_message = "No matching games found between your selections and the WBC schedule."
-                status_type = "warning"
-            else:
-                matched = pd.DataFrame(matches)
-                
-                arrival_dt = pd.to_datetime(arrival_date)
-                departure_dt = pd.to_datetime(departure_date)
-                
-                def is_within_convention_window(row):
-                    if row['Date_parsed'] < arrival_dt: return False
-                    if row['Date_parsed'] == arrival_dt and row['Time'] < arrival_time: return False
-                    event_end_time = row['Time'] + row['Duration']
-                    if row['Date_parsed'] > departure_dt: return False
-                    if row['Date_parsed'] == departure_dt and event_end_time > departure_time: return False
-                    return True
-                    
-                matched = matched[matched.apply(is_within_convention_window, axis=1)]
-                
-                if exclude_demos:
-                    matched = matched[~matched['Round/Heat'].astype(str).str.contains('Demo', case=False, na=False)]
-                
-                if exclude_juniors:
-                    matched = matched[~matched['Event'].astype(str).str.contains('Junior', case=False, na=False)]
-                    matched = matched[~matched['Round/Heat'].astype(str).str.contains('Junior', case=False, na=False)]
-                
-                if exclude_no_round:
-                    matched = matched[matched['Round/Heat'].apply(is_valid_round)]
-                
-                if matched.empty:
-                    status_message = "Your constraints (or arrival/departure times) removed all remaining games from consideration!"
-                    status_type = "warning"
-                else:
-                    total_rounds = {}
-                    for game in wbc['Event'].unique():
-                        game_events = wbc[wbc['Event'] == game]['Round/Heat'].astype(str)
-                        max_round = 0
-                        for ge in game_events:
-                            m1 = re.search(r'Round (\d+)/(\d+)', ge)
-                            if m1: max_round = max(max_round, int(m1.group(2)))
-                            else:
-                                m2 = re.search(r'Round (\d+)', ge)
-                                if m2: max_round = max(max_round, int(m2.group(1)))
-                        total_rounds[game] = max_round
-
-                    def calculate_priority_tier(row):
-                        if row['Event'] in selected_priorities: return 2
-                        return 0
-
-                    matched['priority_tier'] = matched.apply(calculate_priority_tier, axis=1)
-                    matched = matched.sort_values(['priority_tier', 'rating', 'Date_parsed', 'Time'], ascending=[False, False, True, True])
-                    
-                    schedule = []
-                    booked = {}
-                    scheduled_stages = {}
-                    scheduled_heats = {}
-                    scheduled_rounds = {}
-                    
-                    def get_round_number(stage_str):
-                        m = re.search(r'(?:Round|Heat)\s*(\d+)', str(stage_str), re.IGNORECASE)
-                        return int(m.group(1)) if m else None
-
-                    def is_elimination(stage_str):
-                        return bool(re.search(r'quarterfinal|semifinal|final', str(stage_str), re.IGNORECASE))
-
-                    use_variety_pass = "Maximize Variety" in schedule_philosophy
-                    
-                    # --- PASS 1: Priority & Playoff ---
-                    for _, row in matched.iterrows():
-                        date = row['Date']
-                        start = row['Time']
-                        end = start + row['Duration']
-                        game = row['Event']
-                        stage = row['Round/Heat']
-                        tier = row['priority_tier']
-                        
-                        if game not in scheduled_stages:
-                            scheduled_stages[game] = []
-                            scheduled_heats[game] = 0
-                            scheduled_rounds[game] = 0
-                            
-                        past_stages = scheduled_stages[game]
-                        stage_str_lower = str(stage).lower()
-                        
-                        if use_variety_pass and 'heat' in stage_str_lower and scheduled_heats[game] >= 1:
-                            continue
-
-                        if row['Event'] in game_caps:
-                            stage_num = get_round_number(stage)
-                            if (stage_num is not None and stage_num > game_caps[row['Event']]) or is_elimination(stage):
-                                continue
-                        
-                        if tier < 2:
-                            r_num = get_round_number(stage)
-                            if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower:
-                                if not any(get_round_number(ps) == r_num - 1 for ps in past_stages): continue
-                            if is_elimination(stage):
-                                has_two_heats = scheduled_heats[game] >= 2
-                                expected_rounds = total_rounds.get(game, 0)
-                                has_all_rounds = expected_rounds > 0 and scheduled_rounds[game] >= expected_rounds
-                                if not (has_two_heats or has_all_rounds): continue
-
-                        if date not in booked: booked[date] = []
-                        
-                        conflict = False
-                        row_elim = is_elimination(stage)
-                        for b_start, b_end, b_stage, b_tier, b_game in booked[date]:
-                            if max(start, b_start) < min(end, b_end):
-                                b_elim = is_elimination(b_stage)
-                                if game == b_game and tier > 0: continue
-                                if not (row_elim or b_elim): conflict = True; break
-                                    
-                        if not conflict:
-                            booked[date].append((start, end, stage, tier, game))
-                            schedule.append(row.to_dict())
-                            scheduled_stages[game].append(stage)
-                            if 'heat' in stage_str_lower: scheduled_heats[game] += 1
-                            if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
-
-                    # --- PASS 2: Variety Filler ---
-                    if use_variety_pass:
-                        for _, row in matched.iterrows():
-                            if any(r['Event'] == row['Event'] and r['Round/Heat'] == row['Round/Heat'] for r in schedule): continue
-                            
-                            date = row['Date']
-                            start = row['Time']
-                            end = start + row['Duration']
-                            game = row['Event']
-                            stage = row['Round/Heat']
-                            tier = row['priority_tier']
-                            stage_str_lower = str(stage).lower()
-                            past_stages = scheduled_stages[game]
-
-                            if row['Event'] in game_caps:
-                                stage_num = get_round_number(stage)
-                                if (stage_num is not None and stage_num > game_caps[row['Event']]) or is_elimination(stage):
-                                    continue
-
-                            if tier < 2:
-                                r_num = get_round_number(stage)
-                                if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower:
-                                    if not any(get_round_number(ps) == r_num - 1 for ps in past_stages): continue
-                                if is_elimination(stage):
-                                    has_two_heats = scheduled_heats[game] >= 2
-                                    expected_rounds = total_rounds.get(game, 0)
-                                    has_all_rounds = expected_rounds > 0 and scheduled_rounds[game] >= expected_rounds
-                                    if not (has_two_heats or has_all_rounds): continue
-
-                            if date not in booked: booked[date] = []
-                            
-                            conflict = False
-                            row_elim = is_elimination(stage)
-                            for b_start, b_end, b_stage, b_tier, b_game in booked[date]:
-                                if max(start, b_start) < min(end, b_end):
-                                    b_elim = is_elimination(b_stage)
-                                    if game == b_game and tier > 0: continue
-                                    if not (row_elim or b_elim): conflict = True; break
-                                        
-                            if not conflict:
-                                booked[date].append((start, end, stage, tier, game))
-                                schedule.append(row.to_dict())
-                                scheduled_stages[game].append(stage)
-                                if 'heat' in stage_str_lower: scheduled_heats[game] += 1
-                                if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
-
-                    # --- PASS 3: GAP FILLERS ---
-                    if fill_gaps:
-                        wbc_filler = wbc.sort_values(['Date_parsed', 'Time'])
-                        for _, row in wbc_filler.iterrows():
-                            date = row['Date']
-                            start = row['Time']
-                            end = start + row['Duration']
-                            game = row['Event']
-                            stage = row['Round/Heat']
-                            stage_str_lower = str(stage).lower()
-                            game_str_lower = str(game).lower()
-                            
-                            if game in games_to_exclude: continue
-                            if exclude_demos and 'demo' in stage_str_lower: continue
-                            if exclude_juniors and ('junior' in stage_str_lower or 'junior' in game_str_lower): continue
-                            if exclude_no_round and not is_valid_round(stage): continue
-                            if not is_within_convention_window(row): continue
-                            
-                            if row['Event'] in game_caps:
-                                stage_num = get_round_number(stage)
-                                if (stage_num is not None and stage_num > game_caps[row['Event']]):
-                                    continue
-                            
-                            if is_elimination(stage): continue
-                            r_num = get_round_number(stage)
-                            if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower:
-                                continue
-                                
-                            if game not in scheduled_stages:
-                                scheduled_stages[game] = []
-                                scheduled_heats[game] = 0
-                                scheduled_rounds[game] = 0
-                                
-                            if use_variety_pass and 'heat' in stage_str_lower and scheduled_heats[game] >= 1:
-                                continue
-                                
-                            if date not in booked: booked[date] = []
-                            
-                            conflict = False
-                            for b_start, b_end, b_stage, b_tier, b_game in booked[date]:
-                                if max(start, b_start) < min(end, b_end):
-                                    conflict = True
-                                    break
-                                    
-                            if not conflict:
-                                booked[date].append((start, end, stage, -1, game))
-                                schedule.append(row.to_dict())
-                                scheduled_stages[game].append(stage)
-                                if 'heat' in stage_str_lower: scheduled_heats[game] += 1
-                                if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
-
-                    if not schedule:
-                        status_message = "All matching games either conflicted or hit tournament caps. No schedule could be generated."
-                        status_type = "warning"
-                    else:
-                        output_df = pd.DataFrame(schedule).sort_values(['Date_parsed', 'Time'])
-                        status_message = "Success! Your custom itinerary is ready below."
-                        status_type = "success"
-                        success_flag = True
+            # --- The massive loop has been offloaded to engine.py! ---
+            success_flag, status_type, status_message, output_df = generate_itinerary(
+                wbc, favs, selected_priorities, games_to_exclude, games_to_cap, game_caps, 
+                arrival_date, arrival_time, departure_date, departure_time, 
+                exclude_demos, exclude_juniors, exclude_no_round, 
+                schedule_philosophy, fill_gaps
+            )
 
     if status_type == "warning":
         status_area.warning(status_message)
@@ -525,36 +259,14 @@ if proceed:
         status_area.success(status_message)
 
     if success_flag:
-        
-        import altair as alt
-
         st.subheader("Your Personalized Itinerary")
         
         main_tab1, main_tab2, main_tab3 = st.tabs(["📊 Visual Schedule", "📋 Tabular Data", "📈 Custom Metrics"])
         
-        def format_hhmm(t):
-            if pd.isna(t): return ""
-            h = int(t) % 24
-            m = int(round((t - int(t)) * 60))
-            return f"{h:02d}{m:02d}"
-
         with main_tab1:
             viz_df = output_df.copy()
             
-            # --- NEW: Enhanced Border Color logic to handle Seminars, Juniors, and Demos ---
-            def get_border_color(row):
-                stage = str(row['Round/Heat']).lower()
-                game = str(row['Event']).lower()
-                
-                if not is_valid_round(row['Round/Heat']): return '#0000FF' # Blue for Seminars/Meetings
-                if 'junior' in stage or 'junior' in game: return '#00FF00' # Green for Juniors
-                if 'demo' in stage: return '#FFFFFF'                       # White for Demos
-                
-                if 'quarterfinal' in stage: return '#cd7f32' 
-                if 'semifinal' in stage: return '#c0c0c0'     
-                if 'final' in stage: return '#ffd700'         
-                return 'transparent'
-                
+            # Apply border color styling imported from utils.py
             viz_df['Border_Color'] = viz_df.apply(get_border_color, axis=1)
             
             viz_df['Logical Date'] = viz_df.apply(
@@ -571,7 +283,6 @@ if proceed:
             viz_df['Formatted Date'] = viz_df['Logical Date'].dt.strftime('%A, %b %d')
             unique_dates = viz_df.sort_values('Logical Date')['Formatted Date'].unique()
             
-            # --- NEW: Custom palette excluding Blue (#0000FF), Green (#00FF00), and White (#FFFFFF) ---
             safe_palette = [
                 '#E6194B', '#F58231', '#FFE119', '#911EB4', '#F032E6',
                 '#800000', '#9A6324', '#808000', '#E6BEFF', '#FFD8B1',
