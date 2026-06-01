@@ -5,7 +5,7 @@ import altair as alt
 from streamlit_javascript import st_javascript
 import streamlit.components.v1 as components
 
-# --- NEW: Import our separated logic! ---
+# --- Import our separated logic! ---
 from utils import load_wbc_schedule, clean_name, format_hhmm, get_border_color
 from engine import generate_itinerary
 
@@ -245,7 +245,6 @@ if proceed:
     with status_area.container():
         with st.spinner('Crunching the convention matrix! Building your conflict-free itinerary...'):
             
-            # --- The massive loop has been offloaded to engine.py! ---
             success_flag, status_type, status_message, output_df = generate_itinerary(
                 wbc, favs, selected_priorities, games_to_exclude, games_to_cap, game_caps, 
                 arrival_date, arrival_time, departure_date, departure_time, 
@@ -266,7 +265,6 @@ if proceed:
         with main_tab1:
             viz_df = output_df.copy()
             
-            # Apply border color styling imported from utils.py
             viz_df['Border_Color'] = viz_df.apply(get_border_color, axis=1)
             
             viz_df['Logical Date'] = viz_df.apply(
@@ -333,6 +331,13 @@ if proceed:
             table_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
             table_df['Time'] = table_df['Time'].apply(format_hhmm)
             
+            # Create a clean Subject line that drops the parenthesis if the Round is empty
+            def clean_gcal_subject(row):
+                r = str(row['Round/Heat'])
+                if pd.isna(row['Round/Heat']) or r.strip() in ['', 'nan', 'none']:
+                    return str(row['Event'])
+                return f"{row['Event']} ({row['Round/Heat']})"
+                
             st.dataframe(
                 table_df, 
                 use_container_width=True,
@@ -340,11 +345,18 @@ if proceed:
             )
             
         with main_tab3:
-            st.markdown("### Convention Stats")
+            stats_df = output_df.copy()
             
-            total_events = len(output_df)
-            unique_games = output_df['Event'].nunique()
-            total_hours = output_df['Duration'].sum()
+            # Calculate Logical Date so late-night games count towards the correct previous day
+            stats_df['Logical Date'] = stats_df.apply(
+                lambda row: row['Date_parsed'] - pd.Timedelta(days=1) if row['Time'] < 8 else row['Date_parsed'], 
+                axis=1
+            )
+            stats_df['Formatted Date'] = stats_df['Logical Date'].dt.strftime('%A, %b %d')
+            
+            total_events = len(stats_df)
+            unique_games = stats_df['Event'].nunique()
+            total_hours = stats_df['Duration'].sum()
 
             col1, col2, col3, col4 = st.columns(4)
             
@@ -354,13 +366,13 @@ if proceed:
             
             if input_method == "Select Top 10 Games manually":
                 if top10_games:
-                    top10_played = output_df[output_df['Event'].isin(top10_games)]['Event'].nunique()
+                    top10_played = stats_df[stats_df['Event'].isin(top10_games)]['Event'].nunique()
                     col4.metric(label="Top 10 Games Scheduled", value=f"{top10_played} / {len(top10_games)}")
                 else:
                     col4.metric(label="Top 10 Games Scheduled", value="0 / 0")
             else:
-                if 'rating' in output_df.columns:
-                    avg_rating = output_df['rating'].mean()
+                if 'rating' in stats_df.columns:
+                    avg_rating = stats_df['rating'].mean()
                 else:
                     avg_rating = None
                 if pd.notna(avg_rating):
@@ -370,10 +382,63 @@ if proceed:
                 
             st.divider()
             
-            if not output_df.empty:
-                most_played = output_df['Event'].value_counts().idxmax()
-                most_played_count = output_df['Event'].value_counts().max()
-                st.markdown(f"**🏅 Most Played Game:** {most_played} ({most_played_count} scheduled sessions)")
+            if not stats_df.empty:
+                # --- WRITTEN SUMMARY ---
+                st.markdown("### 📝 Schedule Summary")
+                first_event = stats_df.iloc[0]
+                last_event = stats_df.iloc[-1]
+                
+                # Calculations for achievements and summary
+                time_spent_by_game = stats_df.groupby('Event')['Duration'].sum()
+                most_time_game = time_spent_by_game.idxmax()
+                most_time_hours = time_spent_by_game.max()
+                
+                hours_per_day = stats_df.groupby('Formatted Date')['Duration'].sum()
+                ironman_day = hours_per_day.idxmax()
+                ironman_hours = hours_per_day.max()
+
+                most_played = stats_df['Event'].value_counts().idxmax()
+                most_played_count = stats_df['Event'].value_counts().max()
+                
+                start_day = first_event['Formatted Date']
+                start_game = first_event['Event']
+                end_day = last_event['Formatted Date']
+                end_game = last_event['Event']
+                
+                summary_text = f"Your WBC 2026 adventure kicks off on **{start_day}** with **{start_game}**. "
+                summary_text += f"Over the convention, you'll spend **{total_hours:g} hours** at the tables across **{total_events} sessions**, playing **{unique_games} unique games**. "
+                summary_text += f"Your primary focus will be **{most_time_game}**, commanding {most_time_hours:g} hours of your time. "
+                summary_text += f"Pace yourself for **{ironman_day}**—that will be your heaviest day with {ironman_hours:g} hours of tabletop action! "
+                summary_text += f"Your schedule officially wraps up on **{end_day}** with **{end_game}**. Good luck and roll high!"
+                
+                st.info(summary_text)
+                st.divider()
+                
+                # --- ACHIEVEMENTS ---
+                st.markdown("### 🏅 Convention Accolades")
+                colA, colB = st.columns(2)
+                
+                with colA:
+                    st.markdown(f"**⏳ Biggest Time Sink:** {most_time_game} ({most_time_hours:g} hours)")
+                    st.markdown(f"**🔁 Most Played Game:** {most_played} ({most_played_count} sessions)")
+                    
+                    longest_session_idx = stats_df['Duration'].idxmax()
+                    longest_session_game = stats_df.loc[longest_session_idx, 'Event']
+                    longest_session_hours = stats_df.loc[longest_session_idx, 'Duration']
+                    st.markdown(f"**🏃 Marathon Session:** {longest_session_game} ({longest_session_hours:g} hour block)")
+                
+                with colB:
+                    games_per_day = stats_df.groupby('Formatted Date').size()
+                    busiest_day_games = games_per_day.idxmax()
+                    busiest_day_count = games_per_day.max()
+                    st.markdown(f"**🐝 Busiest Day:** {busiest_day_games} ({busiest_day_count} sessions)")
+                    
+                    st.markdown(f"**💪 Ironman Day:** {ironman_day} ({ironman_hours:g} hours scheduled)")
+                    
+                    unique_games_per_day = stats_df.groupby('Formatted Date')['Event'].nunique()
+                    most_variety_day = unique_games_per_day.idxmax()
+                    most_variety_count = unique_games_per_day.max()
+                    st.markdown(f"**🎨 Most Variety:** {most_variety_day} ({most_variety_count} different games)")
 
         st.divider()
         st.markdown("### Export Your Schedule")
@@ -383,16 +448,8 @@ if proceed:
         standard_csv = csv_df.to_csv(index=False).encode('utf-8')
         
         gcal_df = pd.DataFrame()
-        
-        # Create a clean Subject line that drops the parenthesis if the Round is empty
-        def clean_gcal_subject(row):
-            r = str(row['Round/Heat'])
-            if pd.isna(row['Round/Heat']) or r.strip() in ['', 'nan', 'none']:
-                return str(row['Event'])
-            return f"{row['Event']} ({row['Round/Heat']})"
-        
         gcal_df['Subject'] = output_df.apply(clean_gcal_subject, axis=1)
-
+        
         start_dts = output_df['Date_parsed'] + pd.to_timedelta(output_df['Time'], unit='h')
         end_dts = output_df['Date_parsed'] + pd.to_timedelta(output_df['Time'] + output_df['Duration'], unit='h')
         
