@@ -11,7 +11,7 @@ st.set_page_config(page_title="WBC 2026 Custom Scheduler", layout="wide")
 # --- RICH TEXT HEADER ---
 # ---------------------------------------------------------
 st.markdown("<h1 style='text-align: center; color: #cd7f32;'>🎲 WBC 2026 Scheduler</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; font-size: 18px;'>Upload your BGG Collection to generate a personalized convention itinerary!</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-size: 18px;'>Select your Top 10 games or upload your BGG Collection to generate a personalized itinerary!</p>", unsafe_allow_html=True)
 st.divider()
 
 # ---------------------------------------------------------
@@ -47,19 +47,17 @@ def load_wbc_schedule():
     return df.dropna(subset=['Time', 'Duration', 'Date_parsed'])
 
 wbc = load_wbc_schedule()
+unique_wbc_events = sorted(wbc['Event'].dropna().unique())
 
 def clean_name(name):
     return re.sub(r'[^a-z0-9]', '', str(name).lower()) if pd.notna(name) else ""
 
 wbc['clean_name'] = wbc['Event'].apply(clean_name)
 
-# --- STRICT EXCLUSION CHECKER ---
 def is_valid_round(stage_str):
     s = str(stage_str).lower()
     if pd.isna(stage_str) or s.strip() in ['', 'nan', 'none']: return False
-    # If it contains a number, it's valid
     if bool(re.search(r'\d', s)): return True
-    # If it contains a tournament keyword, it's valid
     if bool(re.search(r'quarterfinal|semifinal|final|mulligan', s)): return True
     if 'demo' in s: return True 
     return False
@@ -68,8 +66,32 @@ def is_valid_round(stage_str):
 # --- SIDEBAR CONTROLS ---
 # ---------------------------------------------------------
 
-st.sidebar.header("1. Upload Data")
-uploaded_file = st.sidebar.file_uploader("Upload your BGG Collection CSV", type=["csv"])
+st.sidebar.header("1. Choose Input Method")
+def_method = prefs.get("input_method", "Select Top 10 Games manually")
+input_method = st.sidebar.radio(
+    "How do you want to build your list?",
+    options=["Select Top 10 Games manually", "Upload BGG Collection CSV"],
+    index=0 if def_method == "Select Top 10 Games manually" else 1
+)
+
+top10_games = []
+uploaded_file = None
+rating_cutoff = 7
+
+# --- DYNAMIC UI RENDERING BASED ON INPUT METHOD ---
+if input_method == "Select Top 10 Games manually":
+    def_top10 = [g for g in prefs.get("top10", []) if g in unique_wbc_events]
+    top10_games = st.sidebar.multiselect(
+        "Search and rank your favorite games:",
+        options=unique_wbc_events,
+        default=def_top10,
+        max_selections=10,
+        help="The order matters! The first game you pick will be prioritized over the last."
+    )
+else:
+    uploaded_file = st.sidebar.file_uploader("Upload your BGG Collection CSV", type=["csv"])
+    def_rate = int(prefs.get("rate", 7))
+    rating_cutoff = st.sidebar.slider("Minimum BGG Rating to consider", 1, 10, def_rate, help="Games below this BGG rating will be ignored.")
 
 st.sidebar.header("2. Your Convention Details")
 def_arr_date = pd.to_datetime(prefs.get("arr_date", "2026-07-25"))
@@ -84,15 +106,14 @@ departure_date = st.sidebar.date_input("Departure Date", def_dep_date)
 def_dep_time = int(prefs.get("dep_time", 15))
 departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, def_dep_time)
 
-unique_wbc_events = sorted(wbc['Event'].dropna().unique())
-
 st.sidebar.header("3. Priority Must-Play Games")
 def_pri = [g for g in prefs.get("pri", []) if g in unique_wbc_events]
 selected_priorities = st.sidebar.multiselect(
     "Select up to 3 'Must-Play' games to schedule first:",
     options=unique_wbc_events,
     default=def_pri,
-    max_selections=3
+    max_selections=3,
+    help="These games will be forced into your schedule before anything else!"
 )
 
 st.sidebar.header("4. Filters & Preferences")
@@ -104,7 +125,7 @@ with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
         "Skip specific games:",
         options=unique_wbc_events,
         default=def_excl,
-        help="These games will NOT be scheduled, even if they have a high BGG rating."
+        help="These games will NOT be scheduled, even if they have open slots."
     )
     
     def_cap = [g for g in prefs.get("cap", []) if g in unique_wbc_events]
@@ -127,7 +148,6 @@ with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
     st.divider()
     
     st.markdown("**Algorithm Preferences**")
-    
     def_demo = prefs.get("demo", True)
     exclude_demos = st.checkbox("Exclude Demo Rounds", value=def_demo)
     
@@ -135,13 +155,10 @@ with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
     exclude_juniors = st.checkbox("Exclude Juniors Events", value=def_juniors)
     
     def_no_round = prefs.get("no_round", True)
-    exclude_no_round = st.checkbox("Exclude Seminars & Meetings (No Round Info)", value=def_no_round, help="Skips events without formal heats, such as board meetings or open gaming.")
+    exclude_no_round = st.checkbox("Exclude Seminars & Meetings", value=def_no_round, help="Skips events without formal heats, such as board meetings or open gaming.")
     
     def_fill = prefs.get("fill", False)
     fill_gaps = st.checkbox("Fill Empty Time Slots", value=def_fill, help="Automatically suggest other available convention games during your downtime.")
-    
-    def_rate = int(prefs.get("rate", 7))
-    rating_cutoff = st.slider("Minimum BGG Rating to consider", 1, 10, def_rate)
     
     options = [
         "Maximize Playoff Chances (Prioritize repeat heats)", 
@@ -158,6 +175,9 @@ with st.sidebar.expander("⚙️ Advanced Scheduling Filters", expanded=False):
 st.sidebar.divider()
 if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
     new_prefs = {
+        "input_method": input_method,
+        "top10": top10_games,
+        "rate": rating_cutoff,
         "arr_date": arrival_date.strftime("%Y-%m-%d"),
         "arr_time": arrival_time,
         "dep_date": departure_date.strftime("%Y-%m-%d"),
@@ -170,7 +190,6 @@ if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
         "juniors": exclude_juniors,     
         "no_round": exclude_no_round,   
         "fill": fill_gaps,
-        "rate": rating_cutoff,
         "phil": options.index(schedule_philosophy)
     }
     js_code = f"localStorage.setItem('wbc_prefs', JSON.stringify({json.dumps(new_prefs)}));"
@@ -180,15 +199,36 @@ if st.sidebar.button("💾 Save Settings to Browser", use_container_width=True):
 # ---------------------------------------------------------
 # --- LOGIC ENGINE ---
 # ---------------------------------------------------------
-if uploaded_file is None:
-    status_area.info("👈 Please upload your personal boardgame collection CSV in the sidebar to populate your options!")
+
+proceed = False
+favs = pd.DataFrame()
+
+# Validate inputs based on chosen method
+if input_method == "Select Top 10 Games manually":
+    if not top10_games and not selected_priorities:
+        status_area.info("👈 Please select your Top 10 or Priority games in the sidebar to generate a schedule!")
+    else:
+        # Generate a fake "BGG Collection" using their Top 10 list!
+        favs = pd.DataFrame({
+            'objectname': top10_games,
+            'rating': [10.0 - (i * 0.1) for i in range(len(top10_games))]
+        })
+        favs['clean_name'] = favs['objectname'].apply(clean_name)
+        proceed = True
 else:
-    coll = pd.read_csv(uploaded_file)
-    coll['rating'] = pd.to_numeric(coll['rating'], errors='coerce')
-    
-    favs = coll[coll['rating'] >= rating_cutoff].sort_values('rating', ascending=False)
-    favs['clean_name'] = favs['objectname'].apply(clean_name)
-    
+    if uploaded_file is None and not selected_priorities:
+        status_area.info("👈 Please upload your BGG CSV or select Priority games in the sidebar to generate a schedule!")
+    else:
+        if uploaded_file is not None:
+            coll = pd.read_csv(uploaded_file)
+            coll['rating'] = pd.to_numeric(coll['rating'], errors='coerce')
+            favs = coll[coll['rating'] >= rating_cutoff].sort_values('rating', ascending=False)
+            favs['clean_name'] = favs['objectname'].apply(clean_name)
+        else:
+            favs = pd.DataFrame(columns=['objectname', 'clean_name', 'rating'])
+        proceed = True
+
+if proceed:
     status_message = ""
     status_type = ""
     success_flag = False
@@ -216,7 +256,7 @@ else:
                     matches.append(priority_match)
                     
             if not matches:
-                status_message = "No matching games found between your favorites/priorities and the WBC schedule."
+                status_message = "No matching games found between your selections and the WBC schedule."
                 status_type = "warning"
             else:
                 matched = pd.DataFrame(matches)
@@ -234,7 +274,6 @@ else:
                     
                 matched = matched[matched.apply(is_within_convention_window, axis=1)]
                 
-                # --- APPLYING THE NEW FILTERS STRICTLY ---
                 if exclude_demos:
                     matched = matched[~matched['Round/Heat'].astype(str).str.contains('Demo', case=False, na=False)]
                 
@@ -393,37 +432,27 @@ else:
                             stage_str_lower = str(stage).lower()
                             game_str_lower = str(game).lower()
                             
-                            # 1. Standard Safety Checks & New Exclusions
                             if game in games_to_exclude: continue
                             if exclude_demos and 'demo' in stage_str_lower: continue
                             if exclude_juniors and ('junior' in stage_str_lower or 'junior' in game_str_lower): continue
-                            
-                            # 2. Strict No-Round Check
                             if exclude_no_round and not is_valid_round(stage): continue
-                            
                             if not is_within_convention_window(row): continue
                             
-                            # 3. Maintain Tournament Caps
-                            if game in game_caps:
+                            if row['Event'] in game_caps:
                                 stage_num = get_round_number(stage)
-                                if (stage_num is not None and stage_num > game_caps[game]):
+                                if (stage_num is not None and stage_num > game_caps[row['Event']]):
                                     continue
                             
-                            # 4. Gap fillers should never schedule you in a Semifinal/Final out of nowhere!
                             if is_elimination(stage): continue
-                            
-                            # 5. Gap fillers should only put you in a Heat, or Round 1.
                             r_num = get_round_number(stage)
                             if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower:
                                 continue
                                 
-                            # 6. Initialize tracking for completely new unrated games
                             if game not in scheduled_stages:
                                 scheduled_stages[game] = []
                                 scheduled_heats[game] = 0
                                 scheduled_rounds[game] = 0
                                 
-                            # 7. Apply Variety Philosophy to gap fillers!
                             if use_variety_pass and 'heat' in stage_str_lower and scheduled_heats[game] >= 1:
                                 continue
                                 
@@ -551,11 +580,6 @@ else:
             total_events = len(output_df)
             unique_games = output_df['Event'].nunique()
             total_hours = output_df['Duration'].sum()
-            
-            if 'rating' in output_df.columns:
-                avg_rating = output_df['rating'].mean()
-            else:
-                avg_rating = None
 
             col1, col2, col3, col4 = st.columns(4)
             
@@ -563,10 +587,22 @@ else:
             col2.metric(label="Unique Games", value=unique_games)
             col3.metric(label="Total Hours", value=f"{total_hours:g} hrs")
             
-            if pd.notna(avg_rating):
-                col4.metric(label="Avg BGG Rating", value=f"{avg_rating:.1f}")
+            # --- DYNAMIC METRIC RENDERING ---
+            if input_method == "Select Top 10 Games manually":
+                if top10_games:
+                    top10_played = output_df[output_df['Event'].isin(top10_games)]['Event'].nunique()
+                    col4.metric(label="Top 10 Games Scheduled", value=f"{top10_played} / {len(top10_games)}")
+                else:
+                    col4.metric(label="Top 10 Games Scheduled", value="0 / 0")
             else:
-                col4.metric(label="Avg BGG Rating", value="N/A")
+                if 'rating' in output_df.columns:
+                    avg_rating = output_df['rating'].mean()
+                else:
+                    avg_rating = None
+                if pd.notna(avg_rating):
+                    col4.metric(label="Avg BGG Rating", value=f"{avg_rating:.1f}")
+                else:
+                    col4.metric(label="Avg BGG Rating", value="N/A")
                 
             st.divider()
             
