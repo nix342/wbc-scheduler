@@ -321,4 +321,77 @@ if uploaded_file is not None:
         def format_hhmm(t):
             if pd.isna(t): return ""
             h = int(t) % 24
-            m = int(round((t - int(t)) *
+            m = int(round((t - int(t)) * 60))
+            return f"{h:02d}{m:02d}"
+
+        with main_tab1:
+            viz_df = output_df.copy()
+            
+            viz_df['Logical Date'] = viz_df.apply(
+                lambda row: row['Date_parsed'] - pd.Timedelta(days=1) if row['Time'] < 8 else row['Date_parsed'], 
+                axis=1
+            )
+            
+            viz_df['Plot Time'] = viz_df.apply(lambda row: row['Time'] + 24 if row['Time'] < 8 else row['Time'], axis=1)
+            viz_df['Plot End Time'] = viz_df['Plot Time'] + viz_df['Duration']
+            
+            viz_df['Start Time'] = viz_df['Time'].apply(format_hhmm)
+            viz_df['End Time'] = ((viz_df['Time'] + viz_df['Duration']) % 24).apply(format_hhmm)
+            
+            viz_df['Formatted Date'] = viz_df['Logical Date'].dt.strftime('%A, %b %d')
+            unique_dates = viz_df.sort_values('Logical Date')['Formatted Date'].unique()
+            
+            if len(unique_dates) > 0:
+                day_tabs = st.tabs(list(unique_dates))
+                
+                for idx, selected_date in enumerate(unique_dates):
+                    with day_tabs[idx]:
+                        day_df = viz_df[viz_df['Formatted Date'] == selected_date]
+                        
+                        base_chart = alt.Chart(day_df).encode(
+                            x2='Plot End Time',
+                            y=alt.Y('Event', sort=alt.EncodingSortField(field="Plot Time", order="ascending"), title=""),
+                            color=alt.Color('Event', legend=None),
+                            tooltip=['Event', 'Round/Heat', 'Location', 'Start Time', 'End Time', 'Duration']
+                        ).properties(
+                            width=800
+                        )
+
+                        x_scale = alt.Scale(domain=[8, 26], clamp=True)
+                        label_expr = "datum.value >= 24 ? (datum.value - 24 < 10 ? '0' + (datum.value - 24) : (datum.value - 24)) + '00' : (datum.value < 10 ? '0' + datum.value : datum.value) + '00'"
+                        
+                        bottom_axis_chart = base_chart.mark_bar(cornerRadius=4, height=20).encode(
+                            x=alt.X('Plot Time', title='Time (HHMM)', scale=x_scale, 
+                                    axis=alt.Axis(orient='bottom', tickCount=18, labelExpr=label_expr))
+                        )
+
+                        top_axis_chart = base_chart.mark_bar(opacity=0).encode(
+                            x=alt.X('Plot Time', title='', scale=x_scale, 
+                                    axis=alt.Axis(orient='top', tickCount=18, labelExpr=label_expr))
+                        )
+
+                        chart = alt.layer(bottom_axis_chart, top_axis_chart).resolve_scale(
+                            x='independent'
+                        ).interactive()
+
+                        st.altair_chart(chart, use_container_width=True)
+            else:
+                st.info("No events scheduled yet. Adjust your filters or constraints!")
+
+        with main_tab2:
+            table_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
+            table_df['Time'] = table_df['Time'].apply(format_hhmm)
+            st.dataframe(table_df, use_container_width=True)
+        
+        csv_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
+        csv_df['Time'] = csv_df['Time'].apply(format_hhmm)
+        csv = csv_df.to_csv(index=False).encode('utf-8')
+        
+        st.download_button(
+            label="Download Schedule as CSV",
+            data=csv,
+            file_name="wbc_itinerary.csv",
+            mime="text/csv"
+        )
+else:
+    st.info("👈 Please upload your personal boardgame collection CSV in the sidebar to populate your options!")
