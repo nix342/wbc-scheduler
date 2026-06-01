@@ -123,7 +123,6 @@ st.sidebar.header("2. Your Convention Details")
 def_arr_date = pd.to_datetime(prefs.get("arr_date", "2026-07-25"))
 arrival_date = st.sidebar.date_input("Arrival Date", def_arr_date)
 
-# --- CHANGED: Default arrival time is now 9 (9:00 AM) ---
 def_arr_time = int(prefs.get("arr_time", 9))
 arrival_time = st.sidebar.slider("Arrival Time (24h Clock)", 0, 23, def_arr_time)
 
@@ -132,6 +131,7 @@ departure_date = st.sidebar.date_input("Departure Date", def_dep_date)
 
 def_dep_time = int(prefs.get("dep_time", 15))
 departure_time = st.sidebar.slider("Departure Time (24h Clock)", 0, 23, def_dep_time)
+
 
 st.sidebar.header("3. Priority Must-Play Games")
 
@@ -541,14 +541,21 @@ if proceed:
         with main_tab1:
             viz_df = output_df.copy()
             
-            def get_border_color(stage):
-                s = str(stage).lower()
-                if 'quarterfinal' in s: return '#cd7f32' 
-                if 'semifinal' in s: return '#c0c0c0'     
-                if 'final' in s: return '#ffd700'         
+            # --- NEW: Enhanced Border Color logic to handle Seminars, Juniors, and Demos ---
+            def get_border_color(row):
+                stage = str(row['Round/Heat']).lower()
+                game = str(row['Event']).lower()
+                
+                if not is_valid_round(row['Round/Heat']): return '#0000FF' # Blue for Seminars/Meetings
+                if 'junior' in stage or 'junior' in game: return '#00FF00' # Green for Juniors
+                if 'demo' in stage: return '#FFFFFF'                       # White for Demos
+                
+                if 'quarterfinal' in stage: return '#cd7f32' 
+                if 'semifinal' in stage: return '#c0c0c0'     
+                if 'final' in stage: return '#ffd700'         
                 return 'transparent'
                 
-            viz_df['Border_Color'] = viz_df['Round/Heat'].apply(get_border_color)
+            viz_df['Border_Color'] = viz_df.apply(get_border_color, axis=1)
             
             viz_df['Logical Date'] = viz_df.apply(
                 lambda row: row['Date_parsed'] - pd.Timedelta(days=1) if row['Time'] < 8 else row['Date_parsed'], 
@@ -564,6 +571,14 @@ if proceed:
             viz_df['Formatted Date'] = viz_df['Logical Date'].dt.strftime('%A, %b %d')
             unique_dates = viz_df.sort_values('Logical Date')['Formatted Date'].unique()
             
+            # --- NEW: Custom palette excluding Blue (#0000FF), Green (#00FF00), and White (#FFFFFF) ---
+            safe_palette = [
+                '#E6194B', '#F58231', '#FFE119', '#911EB4', '#F032E6',
+                '#800000', '#9A6324', '#808000', '#E6BEFF', '#FFD8B1',
+                '#FABEBE', '#A9A9A9', '#FF9999', '#CC0000', '#FFCC00',
+                '#CC99FF', '#990099', '#660066', '#330033', '#FF6600'
+            ]
+            
             if len(unique_dates) > 0:
                 day_tabs = st.tabs(list(unique_dates))
                 
@@ -574,7 +589,7 @@ if proceed:
                         base_chart = alt.Chart(day_df).encode(
                             x2='Plot End Time',
                             y=alt.Y('Event', sort=alt.EncodingSortField(field="Plot Time", order="ascending"), title=""),
-                            color=alt.Color('Event', legend=None),
+                            color=alt.Color('Event', scale=alt.Scale(range=safe_palette), legend=None),
                             tooltip=['Event', 'Round/Heat', 'Location', 'Start Time', 'End Time', 'Duration']
                         ).properties(
                             width=800
