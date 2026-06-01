@@ -54,7 +54,7 @@ def generate_itinerary(wbc, favs, selected_priorities, games_to_exclude, games_t
         matched = matched[~matched['Event'].astype(str).str.contains('Junior', case=False, na=False)]
         matched = matched[~matched['Round/Heat'].astype(str).str.contains('Junior', case=False, na=False)]
     if exclude_no_round:
-        matched = matched[matched['Round/Heat'].apply(is_valid_round)]
+        matched = matched[matched.apply(is_valid_round, axis=1)] # <--- Updated
     
     if matched.empty:
         return False, "warning", "Your constraints (or arrival/departure times) removed all remaining games from consideration!", output_df
@@ -204,7 +204,7 @@ def generate_itinerary(wbc, favs, selected_priorities, games_to_exclude, games_t
             if game in games_to_exclude: continue
             if exclude_demos and 'demo' in stage_str_lower: continue
             if exclude_juniors and ('junior' in stage_str_lower or 'junior' in game_str_lower): continue
-            if exclude_no_round and not is_valid_round(stage): continue
+            if exclude_no_round and not is_valid_round(row): continue # <--- Updated
             if not is_within_convention_window(row): continue
             
             if row['Event'] in game_caps:
