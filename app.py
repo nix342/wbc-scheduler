@@ -36,6 +36,7 @@ user_inputs = render_sidebar(unique_wbc_events, st.session_state.prefs)
 # --- PRE-PROCESS USER FAVORITES ---
 proceed = False
 favs = pd.DataFrame()
+owned_games_clean = [] # <--- Initialize the empty list
 
 if user_inputs["input_method"] == "Select Top 10 Games manually":
     if not user_inputs["top10_games"] and not user_inputs["selected_priorities"]:
@@ -53,13 +54,20 @@ else:
     else:
         if user_inputs["uploaded_file"] is not None:
             coll = pd.read_csv(user_inputs["uploaded_file"])
+            
+            # --- NEW: Extract Owned Games for the Packing List ---
+            if 'own' in coll.columns:
+                owned_games_clean = coll[coll['own'] == 1]['objectname'].apply(clean_name).tolist()
+            else:
+                owned_games_clean = coll['objectname'].apply(clean_name).tolist()
+                
             coll['rating'] = pd.to_numeric(coll['rating'], errors='coerce')
             favs = coll[coll['rating'] >= user_inputs["rating_cutoff"]].sort_values('rating', ascending=False)
             favs['clean_name'] = favs['objectname'].apply(clean_name)
         else:
             favs = pd.DataFrame(columns=['objectname', 'clean_name', 'rating'])
         proceed = True
-
+        
 # --- RUN ENGINE & RENDER VIEWS ---
 if proceed:
     with status_area.container():
@@ -83,6 +91,6 @@ if proceed:
         
         with main_tab1: render_visual_schedule(output_df)
         with main_tab2: render_tabular_data(output_df)
-        with main_tab3: render_metrics_and_summary(output_df, user_inputs["input_method"], user_inputs["top10_games"])
+        with main_tab3: render_metrics_and_summary(output_df, user_inputs["input_method"], user_inputs["top10_games"], owned_games_clean)
             
         render_export_section(output_df)
