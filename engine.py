@@ -191,15 +191,18 @@ def generate_itinerary(wbc, favs, selected_priorities, games_to_exclude, games_t
                 if 'heat' in stage_str_lower: scheduled_heats[game] += 1
                 if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
 
-    # --- PASS 3: GAP FILLERS ---
+# --- PASS 3: GAP FILLERS ---
     if fill_gaps:
         wbc_filler = wbc.sort_values(['Date_parsed', 'Time'])
-        for _, row in wbc_filler.iterrows():
-            date = row['Date']
-            start = row['Time']
-            end = start + row['Duration']
-            game = row['Event']
-            stage = row['Round/Heat']
+        
+        for row in wbc_filler.itertuples(index=False):
+            date = row.Date
+            start = row.Time
+            end = start + row.Duration
+            game = row.Event
+            # To access columns with special characters in itertuples, use getattr
+            stage = getattr(row, 'Round/Heat', None)
+            
             stage_str_lower = str(stage).lower()
             game_str_lower = str(game).lower()
             
