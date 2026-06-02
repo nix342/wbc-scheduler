@@ -194,53 +194,80 @@ def generate_itinerary(wbc, favs, selected_priorities, games_to_exclude, games_t
 # --- PASS 3: GAP FILLERS ---
     if fill_gaps:
         wbc_filler = wbc.sort_values(['Date_parsed', 'Time'])
-        
+
+        def get_candidate_rating(row):
+            rating = getattr(row, 'BGG_Rating', None)
+            if pd.notna(rating):
+                return float(rating)
+            rating = getattr(row, 'rating', None)
+            if pd.notna(rating):
+                return float(rating)
+            return 0.0
+
+        best_slot_candidates = {}
         for row in wbc_filler.itertuples(index=False):
             date = row.Date
             start = row.Time
             end = start + row.Duration
             game = row.Event
-            # To access columns with special characters in itertuples, use getattr
             stage = getattr(row, 'Round/Heat', None)
-            
+
             stage_str_lower = str(stage).lower()
             game_str_lower = str(game).lower()
-            
+
             if game in games_to_exclude: continue
             if exclude_demos and 'demo' in stage_str_lower: continue
             if exclude_juniors and ('junior' in stage_str_lower or 'junior' in game_str_lower): continue
-            if exclude_no_round and not is_valid_round(row): continue # <--- Updated
+            if exclude_no_round and not is_valid_round(row): continue
             if not is_within_convention_window(row): continue
-            
-            if row['Event'] in game_caps:
+
+            if row.Event in game_caps:
                 stage_num = get_round_number(stage)
-                if (stage_num is not None and stage_num > game_caps[row['Event']]): continue
-            
+                if (stage_num is not None and stage_num > game_caps[row.Event]): continue
+
             if is_elimination(stage): continue
             r_num = get_round_number(stage)
             if r_num is not None and r_num > 1 and 'heat' not in stage_str_lower: continue
-                
+
+            if use_variety_pass and 'heat' in stage_str_lower and scheduled_heats.get(game, 0) >= 1: continue
+
+            slot_key = (date, start, end)
+            score = get_candidate_rating(row)
+            current_best = best_slot_candidates.get(slot_key)
+            if current_best is None or score > current_best[0]:
+                best_slot_candidates[slot_key] = (score, row)
+
+        for _, row in sorted(best_slot_candidates.values(), key=lambda item: (item[1].Date_parsed, item[1].Time)):
+            date = row.Date
+            start = row.Time
+            end = start + row.Duration
+            game = row.Event
+            stage = getattr(row, 'Round/Heat', None)
+            stage_str_lower = str(stage).lower()
+
             if game not in scheduled_stages:
                 scheduled_stages[game] = []
                 scheduled_heats[game] = 0
                 scheduled_rounds[game] = 0
-                
-            if use_variety_pass and 'heat' in stage_str_lower and scheduled_heats[game] >= 1: continue
-                
-            if date not in booked: booked[date] = []
-            
+
+            if date not in booked:
+                booked[date] = []
+
             conflict = False
             for b_start, b_end, b_stage, b_tier, b_game in booked[date]:
                 if max(start, b_start) < min(end, b_end):
                     conflict = True
                     break
-                    
+
             if not conflict:
                 booked[date].append((start, end, stage, -1, game))
-                schedule.append(row.to_dict())
+                row_dict = row._asdict() if hasattr(row, '_asdict') else row.to_dict()
+                schedule.append(row_dict)
                 scheduled_stages[game].append(stage)
-                if 'heat' in stage_str_lower: scheduled_heats[game] += 1
-                if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower: scheduled_rounds[game] += 1
+                if 'heat' in stage_str_lower:
+                    scheduled_heats[game] += 1
+                if 'round' in stage_str_lower and 'mulligan' not in stage_str_lower:
+                    scheduled_rounds[game] += 1
 
     if not schedule:
         return False, "warning", "All matching games either conflicted or hit tournament caps. No schedule could be generated.", output_df

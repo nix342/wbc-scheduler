@@ -190,14 +190,17 @@ def render_export_section(output_df):
     st.divider()
     st.markdown("### Export Your Schedule")
     
+    # 1. Standard CSV
     csv_df = output_df[['Date', 'Day Code', 'Time', 'Duration', 'Event', 'Round/Heat', 'Location', 'GM']].copy()
     csv_df['Time'] = csv_df['Time'].apply(format_hhmm)
+    standard_csv = csv_df.to_csv(index=False).encode('utf-8')
     
     def clean_gcal_subject(row):
         r = str(row['Round/Heat'])
         if pd.isna(row['Round/Heat']) or r.strip() in ['', 'nan', 'none']: return str(row['Event'])
         return f"{row['Event']} ({row['Round/Heat']})"
         
+    # 2. GCal Sync CSV
     gcal_df = pd.DataFrame()
     gcal_df['Subject'] = output_df.apply(clean_gcal_subject, axis=1)
     
@@ -211,8 +214,92 @@ def render_export_section(output_df):
     gcal_df['All Day Event'] = 'False'
     gcal_df['Description'] = 'GM: ' + output_df.get('GM', 'TBD').fillna('TBD').astype(str)
     gcal_df['Location'] = output_df.get('Location', 'TBD').fillna('TBD').astype(str)
+    gcal_csv = gcal_df.to_csv(index=False).encode('utf-8')
+
+    # 3. Universal Apple/Outlook .ICS File
+    ics_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//WBC Scheduler//EN",
+        "CALSCALE:GREGORIAN"
+    ]
+    for _, row in output_df.iterrows():
+        s_dt = row['Date_parsed'] + pd.to_timedelta(row['Time'], unit='h')
+        e_dt = row['Date_parsed'] + pd.to_timedelta(row['Time'] + row['Duration'], unit='h')
+        
+        # ICS Time Formatting
+        dtstart = s_dt.strftime('%Y%m%dT%H%M%S')
+        dtend = e_dt.strftime('%Y%m%dT%H%M%S')
+        
+        subject = clean_gcal_subject(row).replace(',', '\\,')
+        loc = str(row.get('Location', 'TBD')).replace(',', '\\,')
+        desc = f"GM: {row.get('GM', 'TBD')}".replace(',', '\\,')
+        
+        ics_lines.extend([
+            "BEGIN:VEVENT",
+            f"DTSTART;TZID=America/New_York:{dtstart}",
+            f"DTEND;TZID=America/New_York:{dtend}",
+            f"SUMMARY:{subject}",
+            f"LOCATION:{loc}",
+            f"DESCRIPTION:{desc}",
+            "BEGIN:VALARM",       # <--- Native 15-Minute Push Notification!
+            "TRIGGER:-PT15M",
+            "ACTION:DISPLAY",
+            "DESCRIPTION:15 Minute Warning!",
+            "END:VALARM",
+            "END:VEVENT"
+        ])
+    ics_lines.append("END:VCALENDAR")
+    ics_export = "\r\n".join(ics_lines).encode('utf-8')
+
+    # 4. Pocket PDF Itinerary
+    pdf_bytes = None
+    try:
+        from fpdf import FPDF
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Helvetica", 'B', 16)
+        pdf.cell(0, 10, "WBC 2026 Custom Itinerary", ln=True, align='C')
+        pdf.ln(5)
+        
+        pdf_df = output_df.copy()
+        pdf_df['start_dt'] = pdf_df['Date_parsed'] + pd.to_timedelta(pdf_df['Time'], unit='h')
+        pdf_df = pdf_df.sort_values('start_dt')
+        
+        for date_str, group in pdf_df.groupby(pdf_df['start_dt'].dt.strftime('%A, %b %d'), sort=False):
+            pdf.set_font("Helvetica", 'B', 12)
+            pdf.set_fill_color(200, 220, 255) # Light Blue Headers
+            pdf.cell(0, 8, date_str, ln=True, fill=True)
+            
+            pdf.set_font("Helvetica", '', 10)
+            for _, row in group.iterrows():
+                s_time = (row['Date_parsed'] + pd.to_timedelta(row['Time'], unit='h')).strftime('%I:%M %p')
+                e_time = (row['Date_parsed'] + pd.to_timedelta(row['Time'] + row['Duration'], unit='h')).strftime('%I:%M %p')
+                subj = clean_gcal_subject(row)
+                loc = str(row.get('Location', ''))
+                
+                line = f"{s_time} - {e_time}  |  {subj}  |  {loc}"
+                line = line.encode('latin-1', 'replace').decode('latin-1') # Strip unsupported unicode
+                pdf.cell(0, 6, line, ln=True)
+            pdf.ln(3)
+            
+        try:
+            pdf_bytes = pdf.output(dest='S').encode('latin-1') # FPDF1
+        except:
+            pdf_bytes = bytes(pdf.output()) # FPDF2
+    except ImportError:
+        pass # If FPDF isn't installed, fail gracefully
+
+    # --- Render Download Buttons ---
+    colA, colB, colC, colD = st.columns(4)
+    colA.download_button("📥 Standard CSV", data=standard_csv, file_name="wbc_itinerary.csv", mime="text/csv", use_container_width=True)
+    colB.download_button("📅 GCal Sync (CSV)", data=gcal_csv, file_name="wbc_gcal_import.csv", mime="text/csv", use_container_width=True)
+    colC.download_button("📲 Apple/Outlook (.ICS)", data=ics_export, file_name="wbc_calendar.ics", mime="text/calendar", use_container_width=True)
     
-    colA, colB = st.columns(2)
-    colA.download_button("📥 Download Standard CSV", data=csv_df.to_csv(index=False).encode('utf-8'), file_name="wbc_itinerary.csv", mime="text/csv", use_container_width=True)
-    colB.download_button("📅 Download Google Calendar Sync", data=gcal_df.to_csv(index=False).encode('utf-8'), file_name="wbc_gcal_import.csv", mime="text/csv", use_container_width=True)
-    st.caption("*To import into Google Calendar: Open Google Calendar on a desktop > Click the Gear Icon (Settings) > Select 'Import & Export' > Upload `wbc_gcal_import.csv`.*")
+    if pdf_bytes:
+        colD.download_button("📄 Pocket PDF", data=pdf_bytes, file_name="wbc_itinerary.pdf", mime="application/pdf", use_container_width=True)
+    else:
+        colD.button("📄 Pocket PDF (Requires fpdf2)", disabled=True, use_container_width=True)
+
+    st.caption("*Pro-Tip: Use the **.ICS** file to import natively into Apple Calendar or Outlook (includes automatic 15-minute push notification warnings!). If the PDF export button is disabled, open your terminal and run `pip install fpdf2`.*")
+    
