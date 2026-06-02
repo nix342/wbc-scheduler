@@ -302,3 +302,4 @@ def render_export_section(output_df):
         colD.button("📄 Pocket PDF (Requires fpdf2)", disabled=True, use_container_width=True)
 
     st.caption("*Pro-Tip: Use the **.ICS** file to import natively into Apple Calendar or Outlook (includes automatic 15-minute push notification warnings!). If the PDF export button is disabled, open your terminal and run `pip install fpdf2`.*")
+    
