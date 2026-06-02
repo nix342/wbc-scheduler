@@ -7,10 +7,25 @@ DATA_DIR = Path(__file__).resolve().parent / 'data'
 ENRICHED_CSV = DATA_DIR / 'wbc2026_enriched.csv'
 RAW_CSV = DATA_DIR / 'wbc2026.csv'
 
+def _read_wbc_csv(path, use_raw_format=False):
+    if use_raw_format:
+        return pd.read_csv(path, skiprows=5)
+    return pd.read_csv(path)
+
 @st.cache_data
 def load_wbc_schedule():
     csv_path = ENRICHED_CSV if ENRICHED_CSV.exists() else RAW_CSV
-    df = pd.read_csv(csv_path, skiprows=5)
+    if csv_path == ENRICHED_CSV:
+        df = _read_wbc_csv(csv_path)
+        if 'Time' not in df.columns:
+            df = _read_wbc_csv(csv_path, use_raw_format=True)
+    else:
+        df = _read_wbc_csv(csv_path, use_raw_format=True)
+
+    df.columns = df.columns.str.strip()
+    if 'Time' not in df.columns or 'Duration' not in df.columns or 'Date' not in df.columns:
+        raise ValueError(f"Unable to load WBC schedule from {csv_path}: expected columns not found.")
+
     df['Time'] = pd.to_numeric(df['Time'], errors='coerce')
     df['Duration'] = pd.to_numeric(df['Duration'], errors='coerce')
     df['Date_parsed'] = pd.to_datetime(df['Date'], format='%m/%d/%y', errors='coerce')
