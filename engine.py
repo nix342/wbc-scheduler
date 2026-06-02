@@ -261,7 +261,8 @@ def generate_itinerary(wbc, favs, selected_priorities, games_to_exclude, games_t
 
             if not conflict:
                 booked[date].append((start, end, stage, -1, game))
-                schedule.append(row.to_dict())
+                row_dict = row._asdict() if hasattr(row, '_asdict') else row.to_dict()
+                schedule.append(row_dict)
                 scheduled_stages[game].append(stage)
                 if 'heat' in stage_str_lower:
                     scheduled_heats[game] += 1
