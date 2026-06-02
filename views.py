@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
-from utils import format_hhmm, get_border_color
+from utils import format_hhmm, get_border_color, clean_name
 
 def render_visual_schedule(output_df):
     viz_df = output_df.copy()
@@ -48,7 +48,7 @@ def render_tabular_data(output_df):
     table_df['Time'] = table_df['Time'].apply(format_hhmm)
     st.dataframe(table_df, use_container_width=True, hide_index=True)
 
-def render_metrics_and_summary(output_df, input_method, top10_games):
+def render_metrics_and_summary(output_df, input_method, top10_games, owned_games_clean=None):
     stats_df = output_df.copy()
     stats_df['Logical Date'] = stats_df.apply(lambda row: row['Date_parsed'] - pd.Timedelta(days=1) if row['Time'] < 8 else row['Date_parsed'], axis=1)
     stats_df['Formatted Date'] = stats_df['Logical Date'].dt.strftime('%A, %b %d')
@@ -104,11 +104,37 @@ def render_metrics_and_summary(output_df, input_method, top10_games):
             st.markdown(f"**🔁 Most Played Game:** {stats_df['Event'].value_counts().idxmax()} ({stats_df['Event'].value_counts().max()} sessions)")
             longest_session = stats_df.loc[stats_df['Duration'].idxmax()]
             st.markdown(f"**🏃 Marathon Session:** {longest_session['Event']} ({longest_session['Duration']:g} hour block)")
+
         with colB:
             unique_games_per_day = stats_df.groupby('Formatted Date')['Event'].nunique()
             st.markdown(f"**🎨 Most Variety:** {unique_games_per_day.idxmax()} ({unique_games_per_day.max()} different games)")
             st.markdown(f"**🛏️ Biggest Time Gap:** {max_gap_hours:g} hours (Starts {gap_start_time})" if max_gap_hours > 0 else "**🛏️ Biggest Time Gap:** None! Booked solid.")
 
+        # --- PACKING LIST ---
+        if input_method == "Upload BGG Collection CSV" and owned_games_clean is not None:
+            st.divider()
+            st.markdown("### 🎒 Packing List")
+            
+            scheduled_games = stats_df['Event'].unique()
+            packing_list = []
+            
+            for g in scheduled_games:
+                cg = clean_name(g)
+                for og in owned_games_clean:
+                    # Using the exact same fuzzy-match logic from your engine!
+                    if cg == og or (len(cg) > 5 and cg in og):
+                        packing_list.append(g)
+                        break
+                        
+            if packing_list:
+                st.success("You own these scheduled games! Don't forget to pack them:")
+                # Display in a clean 3-column grid
+                cols = st.columns(3)
+                for idx, game in enumerate(sorted(packing_list)):
+                    cols[idx % 3].markdown(f"📦 **{game}**")
+            else:
+                st.info("You don't own any of the games on your schedule. Travel light!")
+                
 def render_export_section(output_df):
     st.divider()
     st.markdown("### Export Your Schedule")
