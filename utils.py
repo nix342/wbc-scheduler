@@ -1,10 +1,16 @@
 import pandas as pd
 import re
 import streamlit as st
+from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parent / 'data'
+ENRICHED_CSV = DATA_DIR / 'wbc2026_enriched.csv'
+RAW_CSV = DATA_DIR / 'wbc2026.csv'
 
 @st.cache_data
 def load_wbc_schedule():
-    df = pd.read_csv('wbc2026.csv', skiprows=5)
+    csv_path = ENRICHED_CSV if ENRICHED_CSV.exists() else RAW_CSV
+    df = pd.read_csv(csv_path, skiprows=5)
     df['Time'] = pd.to_numeric(df['Time'], errors='coerce')
     df['Duration'] = pd.to_numeric(df['Duration'], errors='coerce')
     df['Date_parsed'] = pd.to_datetime(df['Date'], format='%m/%d/%y', errors='coerce')
