@@ -60,7 +60,7 @@ def render_metrics_and_summary(output_df, input_method, top10_games, owned_games
     # Sort chronologically so everything is perfectly ordered
     stats_df = stats_df.sort_values('start_dt').reset_index(drop=True)
     
-    # --- NEW: True Total Hours Calculation (Merging Overlapping Intervals) ---
+    # --- True Total Hours Calculation (Merging Overlapping Intervals) ---
     merged_intervals = []
     for _, row in stats_df.iterrows():
         start = row['start_dt']
@@ -70,10 +70,8 @@ def render_metrics_and_summary(output_df, input_method, top10_games, owned_games
         else:
             last_end = merged_intervals[-1][1]
             if start <= last_end:
-                # The games overlap! Extend the current time block.
                 merged_intervals[-1][1] = max(last_end, end)
             else:
-                # No overlap. Start a new time block.
                 merged_intervals.append([start, end])
                 
     true_total_hours = sum((iv[1] - iv[0]).total_seconds() for iv in merged_intervals) / 3600.0 if merged_intervals else 0
@@ -81,7 +79,6 @@ def render_metrics_and_summary(output_df, input_method, top10_games, owned_games
     col1, col2, col3, col4 = st.columns(4)
     col1.metric(label="Total Sessions", value=len(stats_df))
     col2.metric(label="Unique Games", value=stats_df['Event'].nunique())
-    # We now use the true, de-duplicated total hours here!
     col3.metric(label="Total Hours", value=f"{true_total_hours:g} hrs")
     
     if input_method == "Select Top 10 Games manually":
@@ -94,33 +91,58 @@ def render_metrics_and_summary(output_df, input_method, top10_games, owned_games
     st.divider()
     
     if not stats_df.empty:
-        # Calculate the largest gap between events
+        # Calculate the gaps between events
         stats_df['max_end_so_far'] = stats_df['end_dt'].cummax().shift(1)
         stats_df['gap'] = stats_df['start_dt'] - stats_df['max_end_so_far']
         
         max_gap_hours = 0
         gap_start_time = ""
+        second_gap_hours = 0
+        second_gap_start_time = ""
+        is_tuesday_auction = False
+        
         if len(stats_df) > 1:
-            max_gap_idx = stats_df['gap'].idxmax()
-            max_gap_td = stats_df.loc[max_gap_idx, 'gap']
-            if pd.notna(max_gap_td) and max_gap_td.total_seconds() > 0:
-                max_gap_hours = max_gap_td.total_seconds() / 3600.0
-                gap_start_time = stats_df.loc[max_gap_idx, 'max_end_so_far'].strftime('%A %I:%M %p')
+            # Sort all valid gaps from largest to smallest
+            valid_gaps = stats_df[stats_df['gap'].dt.total_seconds() > 0].sort_values('gap', ascending=False)
+            
+            if not valid_gaps.empty:
+                first_gap_row = valid_gaps.iloc[0]
+                max_gap_hours = first_gap_row['gap'].total_seconds() / 3600.0
+                gap_start_dt = pd.to_datetime(first_gap_row['max_end_so_far'])
+                gap_start_time = gap_start_dt.strftime('%A %I:%M %p')
+                
+                # Check if the biggest gap is Tuesday (weekday 1) morning/early afternoon
+                if gap_start_dt.weekday() == 1 and gap_start_dt.hour < 14:
+                    is_tuesday_auction = True
+                    
+                if len(valid_gaps) > 1:
+                    second_gap_row = valid_gaps.iloc[1]
+                    second_gap_hours = second_gap_row['gap'].total_seconds() / 3600.0
+                    second_gap_start_time = pd.to_datetime(second_gap_row['max_end_so_far']).strftime('%A %I:%M %p')
 
         time_spent_by_game = stats_df.groupby('Event')['Duration'].sum()
         most_time_game = time_spent_by_game.idxmax()
         most_time_hours = time_spent_by_game.max()
 
+        # --- WRITTEN SUMMARY ---
         summary_text = f"Your WBC 2026 adventure kicks off on **{stats_df.iloc[0]['Formatted Date']}** with **{stats_df.iloc[0]['Event']}**. "
         summary_text += f"Over the convention, you'll spend **{true_total_hours:g} hours** at the tables across **{len(stats_df)} sessions**, playing **{stats_df['Event'].nunique()} unique games**. "
         summary_text += f"Your primary focus will be **{most_time_game}**, commanding {most_time_hours:g} hours of your time. "
+        
         if max_gap_hours > 0:
-            summary_text += f"Make sure to catch your breath during your longest break: a **{max_gap_hours:g}-hour** window starting on {gap_start_time}. "
+            if is_tuesday_auction and second_gap_hours > 0:
+                summary_text += f"Besides the traditional Tuesday morning break for the auction, your longest break is a **{second_gap_hours:g}-hour** window starting on {second_gap_start_time}. "
+            elif is_tuesday_auction:
+                summary_text += f"Your longest break perfectly lines up with the traditional Tuesday morning auction ({max_gap_hours:g} hours). "
+            else:
+                summary_text += f"Make sure to catch your breath during your longest break: a **{max_gap_hours:g}-hour** window starting on {gap_start_time}. "
+                
         summary_text += f"Your schedule officially wraps up on **{stats_df.iloc[-1]['Formatted Date']}** with **{stats_df.iloc[-1]['Event']}**. Good luck and roll high!"
         
         st.info(summary_text)
         st.divider()
         
+        # --- ACHIEVEMENTS ---
         st.markdown("### 🏅 Convention Accolades")
         colA, colB = st.columns(2)
         with colA:
@@ -131,7 +153,15 @@ def render_metrics_and_summary(output_df, input_method, top10_games, owned_games
         with colB:
             unique_games_per_day = stats_df.groupby('Formatted Date')['Event'].nunique()
             st.markdown(f"**🎨 Most Variety:** {unique_games_per_day.idxmax()} ({unique_games_per_day.max()} different games)")
-            st.markdown(f"**🛏️ Biggest Time Gap:** {max_gap_hours:g} hours (Starts {gap_start_time})" if max_gap_hours > 0 else "**🛏️ Biggest Time Gap:** None! Booked solid.")
+            
+            # Update the UI gap readouts to handle the Tuesday exception
+            if max_gap_hours > 0:
+                if is_tuesday_auction and second_gap_hours > 0:
+                    st.markdown(f"**🛏️ Biggest Time Gaps:** {max_gap_hours:g} hrs (Tuesday Auction) & {second_gap_hours:g} hrs (Starts {second_gap_start_time})")
+                else:
+                    st.markdown(f"**🛏️ Biggest Time Gap:** {max_gap_hours:g} hours (Starts {gap_start_time})")
+            else:
+                st.markdown("**🛏️ Biggest Time Gap:** None! Booked solid.")
 
         # --- PACKING LIST ---
         if input_method == "Upload BGG Collection CSV" and owned_games_clean is not None:
@@ -154,7 +184,7 @@ def render_metrics_and_summary(output_df, input_method, top10_games, owned_games
                 for idx, game in enumerate(sorted(packing_list)):
                     cols[idx % 3].markdown(f"📦 **{game}**")
             else:
-                st.info("You don't own any of the games on your schedule. Travel light!")                
+                st.info("You don't own any of the games on your schedule. Travel light!")
 
 def render_export_section(output_df):
     st.divider()
