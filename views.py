@@ -50,13 +50,39 @@ def render_tabular_data(output_df):
 
 def render_metrics_and_summary(output_df, input_method, top10_games, owned_games_clean=None):
     stats_df = output_df.copy()
+    
+    # Pre-calculate Logical Dates and actual Datetimes right at the top
     stats_df['Logical Date'] = stats_df.apply(lambda row: row['Date_parsed'] - pd.Timedelta(days=1) if row['Time'] < 8 else row['Date_parsed'], axis=1)
     stats_df['Formatted Date'] = stats_df['Logical Date'].dt.strftime('%A, %b %d')
+    stats_df['start_dt'] = stats_df['Date_parsed'] + pd.to_timedelta(stats_df['Time'], unit='h')
+    stats_df['end_dt'] = stats_df['Date_parsed'] + pd.to_timedelta(stats_df['Time'] + stats_df['Duration'], unit='h')
+    
+    # Sort chronologically so everything is perfectly ordered
+    stats_df = stats_df.sort_values('start_dt').reset_index(drop=True)
+    
+    # --- NEW: True Total Hours Calculation (Merging Overlapping Intervals) ---
+    merged_intervals = []
+    for _, row in stats_df.iterrows():
+        start = row['start_dt']
+        end = row['end_dt']
+        if not merged_intervals:
+            merged_intervals.append([start, end])
+        else:
+            last_end = merged_intervals[-1][1]
+            if start <= last_end:
+                # The games overlap! Extend the current time block.
+                merged_intervals[-1][1] = max(last_end, end)
+            else:
+                # No overlap. Start a new time block.
+                merged_intervals.append([start, end])
+                
+    true_total_hours = sum((iv[1] - iv[0]).total_seconds() for iv in merged_intervals) / 3600.0 if merged_intervals else 0
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric(label="Total Sessions", value=len(stats_df))
     col2.metric(label="Unique Games", value=stats_df['Event'].nunique())
-    col3.metric(label="Total Hours", value=f"{stats_df['Duration'].sum():g} hrs")
+    # We now use the true, de-duplicated total hours here!
+    col3.metric(label="Total Hours", value=f"{true_total_hours:g} hrs")
     
     if input_method == "Select Top 10 Games manually":
         top10_played = stats_df[stats_df['Event'].isin(top10_games)]['Event'].nunique() if top10_games else 0
@@ -68,9 +94,7 @@ def render_metrics_and_summary(output_df, input_method, top10_games, owned_games
     st.divider()
     
     if not stats_df.empty:
-        stats_df['start_dt'] = stats_df['Date_parsed'] + pd.to_timedelta(stats_df['Time'], unit='h')
-        stats_df['end_dt'] = stats_df['Date_parsed'] + pd.to_timedelta(stats_df['Time'] + stats_df['Duration'], unit='h')
-        stats_df = stats_df.sort_values('start_dt').reset_index(drop=True)
+        # Calculate the largest gap between events
         stats_df['max_end_so_far'] = stats_df['end_dt'].cummax().shift(1)
         stats_df['gap'] = stats_df['start_dt'] - stats_df['max_end_so_far']
         
@@ -88,7 +112,7 @@ def render_metrics_and_summary(output_df, input_method, top10_games, owned_games
         most_time_hours = time_spent_by_game.max()
 
         summary_text = f"Your WBC 2026 adventure kicks off on **{stats_df.iloc[0]['Formatted Date']}** with **{stats_df.iloc[0]['Event']}**. "
-        summary_text += f"Over the convention, you'll spend **{stats_df['Duration'].sum():g} hours** at the tables across **{len(stats_df)} sessions**, playing **{stats_df['Event'].nunique()} unique games**. "
+        summary_text += f"Over the convention, you'll spend **{true_total_hours:g} hours** at the tables across **{len(stats_df)} sessions**, playing **{stats_df['Event'].nunique()} unique games**. "
         summary_text += f"Your primary focus will be **{most_time_game}**, commanding {most_time_hours:g} hours of your time. "
         if max_gap_hours > 0:
             summary_text += f"Make sure to catch your breath during your longest break: a **{max_gap_hours:g}-hour** window starting on {gap_start_time}. "
@@ -104,7 +128,6 @@ def render_metrics_and_summary(output_df, input_method, top10_games, owned_games
             st.markdown(f"**🔁 Most Played Game:** {stats_df['Event'].value_counts().idxmax()} ({stats_df['Event'].value_counts().max()} sessions)")
             longest_session = stats_df.loc[stats_df['Duration'].idxmax()]
             st.markdown(f"**🏃 Marathon Session:** {longest_session['Event']} ({longest_session['Duration']:g} hour block)")
-
         with colB:
             unique_games_per_day = stats_df.groupby('Formatted Date')['Event'].nunique()
             st.markdown(f"**🎨 Most Variety:** {unique_games_per_day.idxmax()} ({unique_games_per_day.max()} different games)")
@@ -121,20 +144,18 @@ def render_metrics_and_summary(output_df, input_method, top10_games, owned_games
             for g in scheduled_games:
                 cg = clean_name(g)
                 for og in owned_games_clean:
-                    # Using the exact same fuzzy-match logic from your engine!
                     if cg == og or (len(cg) > 5 and cg in og):
                         packing_list.append(g)
                         break
                         
             if packing_list:
                 st.success("You own these scheduled games! Don't forget to pack them:")
-                # Display in a clean 3-column grid
                 cols = st.columns(3)
                 for idx, game in enumerate(sorted(packing_list)):
                     cols[idx % 3].markdown(f"📦 **{game}**")
             else:
-                st.info("You don't own any of the games on your schedule. Travel light!")
-                
+                st.info("You don't own any of the games on your schedule. Travel light!")                
+
 def render_export_section(output_df):
     st.divider()
     st.markdown("### Export Your Schedule")
