@@ -31,12 +31,24 @@ def load_wbc_schedule():
     df['Date_parsed'] = pd.to_datetime(df['Date'], format='%m/%d/%y', errors='coerce')
     return df.dropna(subset=['Time', 'Duration', 'Date_parsed'])
 
-def clean_name(name):
-    return re.sub(r'[^a-z0-9]', '', str(name).lower()) if pd.notna(name) else ""
+
+def _row_get(row, key):
+    if hasattr(row, 'get'):
+        try:
+            return row.get(key)
+        except TypeError:
+            pass
+    try:
+        return row[key]
+    except Exception:
+        pass
+    attr = key.replace('/', '_').replace(' ', '_')
+    return getattr(row, attr, None)
+
 
 def is_valid_round(row):
-    stage_str = row['Round/Heat']
-    event_str = row['Event']
+    stage_str = _row_get(row, 'Round/Heat')
+    event_str = _row_get(row, 'Event')
     s = str(stage_str).lower()
     e = str(event_str).lower()
     
@@ -51,6 +63,9 @@ def is_valid_round(row):
 
     return False
 
+def clean_name(name):
+    return re.sub(r'[^a-z0-9]', '', str(name).lower()) if pd.notna(name) else ""
+
 def format_hhmm(t):
     if pd.isna(t): return ""
     h = int(t) % 24
@@ -58,8 +73,8 @@ def format_hhmm(t):
     return f"{h:02d}{m:02d}"
 
 def get_border_color(row):
-    stage = str(row['Round/Heat']).lower()
-    game = str(row['Event']).lower()
+    stage = str(_row_get(row, 'Round/Heat')).lower()
+    game = str(_row_get(row, 'Event')).lower()
     
     # 1. Explicitly check for specific event types FIRST
     if 'junior' in stage or 'junior' in game: return '#00FF00' # Green for Juniors
